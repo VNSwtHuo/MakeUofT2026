@@ -147,16 +147,29 @@ export default function Dashboard() {
   const [playbackProgress, setPlaybackProgress] = useState(0);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [signedInViaESP32, setSignedInViaESP32] = useState(false);
+  const [waitingForRFID, setWaitingForRFID] = useState(false);
 
   const sequenceIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const playbackStartTimeRef = useRef<number>(0);
   const playbackDurationRef = useRef<number>(0);
   const sequenceStartTimeRef = useRef<number>(0);
   const totalSequenceDurationRef = useRef<number>(0);
+  const waitingForRFIDRef = useRef<boolean>(false);
 
   // Initialize serial connection on mount (if port was previously selected)
   useEffect(() => {
     // No auto-connect: user must click Connect ESP32 (Web Serial requires gesture)
+    
+    // Set up disconnect listener
+    esp32Service.onDisconnect(() => {
+      setSerialConnected(false);
+      setSerialStatus("Disconnected - ESP32 unplugged");
+      setWaitingForRFID(false);
+      waitingForRFIDRef.current = false;
+      alert("ESP32 has been disconnected. Please reconnect to continue.");
+    });
+    
     return () => {};
   }, []);
 
@@ -166,22 +179,60 @@ export default function Dashboard() {
     try {
       const ok = await esp32Service.connect();
       if (ok) {
-        esp32Service.onRFIDScan((uid: string) => {
-          setUserId(uid);
-          setSerialStatus(`Connected - User: ${uid}`);
+        setSerialConnected(true);
+        setWaitingForRFID(true);
+        waitingForRFIDRef.current = true;
+        setSerialStatus("Connected - Please scan RFID card");
+        
+        // Set up disconnect handler
+        esp32Service.onDisconnect(() => {
+          setSerialConnected(false);
+          setSerialStatus("Disconnected - ESP32 unplugged");
+          setWaitingForRFID(false);
+          waitingForRFIDRef.current = false;
+          setIsConnecting(false);
+          alert("ESP32 has been disconnected. Please reconnect to continue.");
         });
+        
+        esp32Service.onRFIDScan((uid: string) => {
+          if (waitingForRFIDRef.current) {
+            setUserId(uid);
+            setCurrentUserId(uid);
+            setSignedInViaESP32(true);
+            setWaitingForRFID(false);
+            waitingForRFIDRef.current = false;
+            setSerialStatus(`Connected - User: ${uid}`);
+            setIsConnecting(false);
+            
+            // Load user settings
+            fetch(`/api/settings?userId=${encodeURIComponent(uid)}`)
+              .then(resp => resp.json())
+              .then(data => {
+                if (data && Array.isArray(data.ranges)) {
+                  const mapped = data.ranges.map((r: any, idx: number) => ({
+                    id: r.id || `range-${idx}`,
+                    minDistance: Number(r.minDistance) || 0,
+                    maxDistance: Number(r.maxDistance) || 0,
+                    audioId: r.soundId || r.audiofile || null,
+                  }));
+                  setDistanceTriggers(mapped);
+                  alert(`Loaded settings for user ${uid}`);
+                }
+              })
+              .catch(err => console.error("Failed to load settings", err));
+          }
+        });
+        
         esp32Service.onRadarData((angle: number, distance: number) => {
           // optional: handle radar stream updates
         });
-        setSerialConnected(true);
-        setSerialStatus("Connected - Ready to scan");
       } else {
         setSerialStatus("Failed to connect");
+        setIsConnecting(false);
       }
     } catch (error) {
       console.error("Connection error:", error);
       setSerialStatus("Connection failed");
-    } finally {
       setIsConnecting(false);
     }
   };
@@ -229,11 +280,18 @@ export default function Dashboard() {
     };
   }, []);
 
-  // Listen for RFID scans from esp32Service (Web Serial client)
+  // Listen for RFID scans from esp32Service (Web Serial client) - for initial sign-in
   useEffect(() => {
     const onRfid = async (uid: string) => {
+      // Only handle if not waiting for manual connection RFID
+      if (waitingForRFIDRef.current) return;
+      
       // UID comes in as hex bytes (e.g. "04 A3 2B ...") - use as-is
       setCurrentUserId(uid);
+      setUserId(uid);
+      setSignedInViaESP32(true);
+      setSerialConnected(true);
+      
       try {
         const resp = await fetch(
           `/api/settings?userId=${encodeURIComponent(uid)}`,
@@ -245,7 +303,7 @@ export default function Dashboard() {
               id: r.id || `range-${idx}`,
               minDistance: Number(r.minDistance) || 0,
               maxDistance: Number(r.maxDistance) || 0,
-              audioId: r.audiofile || null,
+              audioId: r.soundId || r.audiofile || null,
             }));
             setDistanceTriggers(mapped);
             alert(`Loaded settings for user ${uid}`);
@@ -253,7 +311,9 @@ export default function Dashboard() {
         } else {
           // No settings found
           setDistanceTriggers([]);
-          alert(`No saved settings for user ${uid}`);
+          if (resp.status !== 404) {
+            alert(`No saved settings for user ${uid}`);
+          }
         }
       } catch (err) {
         console.error("Failed to load settings for UID", uid, err);
@@ -464,13 +524,19 @@ export default function Dashboard() {
         body: JSON.stringify(settingsData),
       });
 
-      if (!response.ok) {
+      let storageInfo = "";
+      if (response.ok) {
+        const saveResult = await response.json();
+        const storageType = saveResult.storage === 'mongodb' ? 'cloud database' : 'local file';
+        storageInfo = ` (saved to ${storageType})`;
+      } else {
         console.warn(
           "Failed to save settings to server (but ESP32 was updated)",
         );
+        storageInfo = " (server save failed, but ESP32 updated)";
       }
 
-      alert("Settings and audio files successfully loaded to ESP32!");
+      alert(`Settings and audio files successfully loaded to ESP32!${storageInfo}`);
     } catch (error) {
       console.error("Save settings error:", error);
       alert(`Failed to save settings: ${(error as Error).message}`);
@@ -487,24 +553,42 @@ export default function Dashboard() {
     }
 
     try {
-      const response = await fetch(`/api/settings?userId=${userId}`);
+      console.log('[Load Settings] Fetching for userId:', userId);
+      const response = await fetch(`/api/settings?userId=${encodeURIComponent(userId)}`);
+      
+      console.log('[Load Settings] Response status:', response.status);
+      
       if (!response.ok) {
-        alert("No saved settings found for this user.");
+        const errorData = await response.json().catch(() => ({}));
+        console.error('[Load Settings] Error response:', errorData);
+        
+        if (response.status === 404) {
+          alert("No saved settings found for this user. Please save settings first.");
+        } else if (response.status === 503) {
+          alert("Database not configured. Settings cannot be loaded.");
+        } else {
+          alert(`Failed to load settings: ${errorData.error || 'Unknown error'}`);
+        }
         return;
       }
 
       const data = await response.json();
+      console.log('[Load Settings] Received data:', data);
+      
       if (data.ranges && data.ranges.length > 0) {
         setDistanceTriggers(
           data.ranges.map((range: any) => ({
             id: range.id,
             minDistance: range.minDistance,
             maxDistance: range.maxDistance,
-            audioId: range.audiofile,
-            audioName: range.audiofile,
+            audioId: range.soundId || range.audiofile || null,
+            audioName: range.soundId || range.audiofile,
           })),
         );
-        alert("Settings loaded from saved configuration.");
+        const storageType = data.storage === 'mongodb' ? 'cloud database' : 'local file';
+        alert(`Settings loaded successfully from ${storageType}! Found ${data.ranges.length} range(s).`);
+      } else {
+        alert("No ranges found in saved settings.");
       }
     } catch (error) {
       console.error("Load settings error:", error);
@@ -976,14 +1060,14 @@ export default function Dashboard() {
           )}
         </div>
         <div className="flex gap-3 flex-wrap">
-          {!serialConnected && (
+          {!signedInViaESP32 && !serialConnected && (
             <Button
               onClick={handleConnectESP32}
               disabled={isConnecting}
               size="lg"
               className="bg-[#435663] text-white hover:bg-[#435663]/90 whitespace-nowrap"
             >
-              {isConnecting ? "Connecting..." : "Connect ESP32"}
+              {isConnecting && waitingForRFID ? "Waiting for RFID scan..." : isConnecting ? "Connecting..." : "Connect ESP32"}
             </Button>
           )}
           <Button

@@ -6,13 +6,13 @@
         "id": "zone1",
         "minDistance": 0,
         "maxDistance": 0.5,
-        "soundId": "warning"
+        "soundId": "beep"
       },
       {
         "id": "zone2",
         "minDistance": 0.5,
         "maxDistance": 1,
-        "soundId": "alert"
+        "soundId": "warning"
       },
       {
         "id": "zone3",
@@ -21,6 +21,6 @@
         "soundId": "beep"
       }
     ],
-    "updatedAt": "2026-02-15T12:52:12.096Z"
+    "updatedAt": "2026-02-15T15:46:14.585Z"
   }
 ]

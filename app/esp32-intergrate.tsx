@@ -5,6 +5,8 @@ export class ESP32Service {
   private onDataCallback: ((angle: number, distance: number) => void) | null =
     null;
   private onRFIDCallback: ((uid: string) => void) | null = null;
+  private onDisconnectCallback: (() => void) | null = null;
+  private onLogoutCallback: (() => void) | null = null;
 
   async connect(): Promise<boolean> {
     try {
@@ -48,6 +50,15 @@ export class ESP32Service {
       // Set up writer if available
       if (this.port.writable && !this.writer) {
         this.writer = this.port.writable.getWriter();
+      }
+
+      // Listen for disconnect events
+      if (this.port && navigator.serial) {
+        navigator.serial.addEventListener('disconnect', (event: any) => {
+          if (event.target === this.port) {
+            this.handleDisconnect();
+          }
+        });
       }
 
       // Start reading (will no-op if not readable)
@@ -139,10 +150,7 @@ export class ESP32Service {
       }
     } catch (error) {
       console.error("Error reading from ESP32:", error);
-      // Try to restart reading if there's an error
-      if (this.port?.readable) {
-        setTimeout(() => this.startReading(), 1000);
-      }
+      this.handleDisconnect();
     } finally {
       try {
         this.reader?.releaseLock();
@@ -154,6 +162,14 @@ export class ESP32Service {
 
   private processLine(line: string): void {
     if (!line) return;
+
+    // Check if it's logout message
+    if (/^LOGOUT:/i.test(line)) {
+      if (this.onLogoutCallback) {
+        this.onLogoutCallback();
+      }
+      return;
+    }
 
     // Check if it's RFID data (format: "UID: XX XX XX XX" or "UID:XX XX XX XX")
     // Handle both with and without space after colon, case insensitive
@@ -445,6 +461,24 @@ export class ESP32Service {
 
   onRFIDScan(callback: (uid: string) => void): void {
     this.onRFIDCallback = callback;
+  }
+
+  onDisconnect(callback: () => void): void {
+    this.onDisconnectCallback = callback;
+  }
+
+  onLogout(callback: () => void): void {
+    this.onLogoutCallback = callback;
+  }
+
+  private handleDisconnect(): void {
+    console.log('ESP32 disconnected');
+    this.port = null;
+    this.reader = null;
+    this.writer = null;
+    if (this.onDisconnectCallback) {
+      this.onDisconnectCallback();
+    }
   }
 
   isConnected(): boolean {
