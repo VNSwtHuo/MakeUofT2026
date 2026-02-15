@@ -544,7 +544,7 @@ export default function Dashboard() {
     sequenceStartTimeRef.current = Date.now();
     totalSequenceDurationRef.current = totalDuration;
     setIsPlayingSequence(true);
-    
+
     let lastTriggerId: string | null = null;
 
     const allAudios = [
@@ -556,7 +556,7 @@ export default function Dashboard() {
     // Update function that checks position and plays appropriate audio
     const updatePosition = () => {
       const elapsed = Date.now() - sequenceStartTimeRef.current;
-      
+
       if (elapsed >= totalDuration) {
         // Sequence complete
         if (sequenceIntervalRef.current) {
@@ -584,7 +584,8 @@ export default function Dashboard() {
 
       // Find which trigger zone we're in
       const currentTrigger = distanceTriggers.find(
-        (t) => currentPosition >= t.minDistance && currentPosition <= t.maxDistance
+        (t) =>
+          currentPosition >= t.minDistance && currentPosition <= t.maxDistance,
       );
 
       // If we've moved to a different trigger, update audio
@@ -604,7 +605,8 @@ export default function Dashboard() {
           setPlayingTrigger(currentTrigger.id);
 
           const audio = currentTrigger.audioId
-            ? allAudios.find((item) => item.id === currentTrigger.audioId) || null
+            ? allAudios.find((item) => item.id === currentTrigger.audioId) ||
+              null
             : null;
 
           if (audio) {
@@ -950,7 +952,7 @@ export default function Dashboard() {
   ];
 
   return (
-    <div className="min-h-screen flex flex-col px-4 py-8 bg-[#FFF8D4]">
+    <div className="min-h-screen flex flex-col px-4 py-8 bg-[#fbf8ec]">
       <audio ref={audioRef} onEnded={() => setActiveSound(null)} />
 
       {/* HEADER WITH SERIAL STATUS */}
@@ -1033,7 +1035,7 @@ export default function Dashboard() {
           </div>
 
           {/* Preset Buzzer Sounds */}
-          <div className="bg-white border border-[#A3B087]/30 rounded-xl p-8">
+          <div className="bg-[#A3B087]/20 border border-[#A3B087] rounded-xl p-8">
             <h2 className="text-2xl font-semibold text-[#313647] mb-6 flex items-center gap-2">
               <Volume2 className="size-6" />
               Preset Buzzer Sounds
@@ -1043,11 +1045,15 @@ export default function Dashboard() {
                 <Button
                   key={audio.id}
                   onClick={() => playSound(audio)}
-                  className={`h-24 flex flex-col items-center justify-center transition-colors overflow-hidden ${
-                    activeSound === audio.id
-                      ? "bg-[#435663] text-white border-[#435663]"
-                      : "bg-[#A3B087]/10 hover:bg-[#A3B087]/20 text-[#313647] border border-[#A3B087]/30"
-                  } rounded-lg`}
+                  className={`h-24 flex flex-col items-center justify-center
+    bg-[#A3B087]/60 text-[#313647] border border-[#A3B087]/30
+    hover:bg-[#A3B087]/60
+    active:bg-[#A3B087]/60
+    focus:bg-[#A3B087]/60
+    focus-visible:bg-[#A3B087]
+    focus-visible:ring-0
+    transition-none
+    rounded-lg`}
                 >
                   {activeSound === audio.id ? (
                     <Pause className="size-5 mb-1" />
@@ -1268,7 +1274,7 @@ export default function Dashboard() {
               <Button
                 onClick={handleSaveCustomTone}
                 size="lg"
-                className="bg-green-600 text-white hover:bg-green-700"
+                className="bg-[#A3B087] text-white hover:bg-[#A3B087]/90"
               >
                 Save Custom Tone
               </Button>
@@ -1310,22 +1316,6 @@ export default function Dashboard() {
             {soundGenerationType === "tts" && (
               <>
                 {/* Voice Selection */}
-                <Button
-                  onClick={async () => {
-                    try {
-                      const ok = await esp32Service.connect();
-                      if (ok) alert("ESP32 connected (browser serial)");
-                      else alert("ESP32 connection failed or canceled");
-                    } catch (err) {
-                      console.error(err);
-                      alert("ESP32 connection error");
-                    }
-                  }}
-                  size="lg"
-                  className="ml-3 bg-[#2b7a78] text-white"
-                >
-                  Connect ESP32
-                </Button>
                 <div className="space-y-3">
                   <label className="text-lg font-medium text-[#313647]">
                     Select Voice
@@ -1450,7 +1440,7 @@ export default function Dashboard() {
           </p>
 
           {/* Visual Range Display */}
-          <div className="mb-8 p-4 bg-[#FFF8D4] rounded-lg border border-[#A3B087]/20">
+          <div className="mb-8 p-4 bg-white rounded-lg border border-[#435663]/80">
             <div className="flex items-center justify-between mb-4 px-2">
               <span className="text-sm font-medium text-[#313647]">0m</span>
               <span className="text-sm font-medium text-[#313647]">2.5m</span>
@@ -1472,7 +1462,11 @@ export default function Dashboard() {
                         left: `${startPercent}%`,
                         width: `${widthPercent}%`,
                       }}
-                      className="absolute top-0 bottom-0 bg-gradient-to-r from-gray-800 to-gray-300 border-r border-gray-600 flex items-center justify-center text-xs font-medium text-white"
+                      className="absolute top-0 bottom-0 
+bg-gradient-to-r from-[#A3B087] to-[#FFF8D4] 
+border-r border-[#A3B087]/40 
+flex items-center justify-center 
+text-xs font-medium text-[#313647]"
                       title={`${trigger.minDistance}m - ${trigger.maxDistance}m: ${trigger.audioName || "No audio assigned"}`}
                     >
                       {trigger.audioName && (
@@ -1497,9 +1491,12 @@ export default function Dashboard() {
 
                   const elapsed = Date.now() - sequenceStartTimeRef.current;
                   const totalRange = 2.5 - 0;
-                  
+
                   // Linear progression from 0 to 2.5m over the total duration
-                  const progress = Math.min(elapsed / totalSequenceDurationRef.current, 1);
+                  const progress = Math.min(
+                    elapsed / totalSequenceDurationRef.current,
+                    1,
+                  );
                   const currentPosition = progress * totalRange;
                   const linePercent = (currentPosition / totalRange) * 100;
 
@@ -1589,7 +1586,7 @@ export default function Dashboard() {
             {distanceTriggers.map((trigger) => (
               <div
                 key={trigger.id}
-                className="bg-[#FFF8D4] p-4 rounded-lg border border-[#A3B087]/20 space-y-3"
+                className="bg-[#A3B087]/10 p-4 rounded-lg border border-[#A3B087]/20 space-y-3"
               >
                 <div className="flex justify-between items-center">
                   <h3 className="font-semibold text-[#313647]">
@@ -1610,7 +1607,7 @@ export default function Dashboard() {
                     )}
                     <button
                       onClick={() => deleteCustomRange(trigger.id)}
-                      className="px-2 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 transition-colors"
+                      className="px-2 py-1 text-xs bg-[#435663] text-white rounded hover:bg-[#435663]/80 transition-colors"
                     >
                       Delete
                     </button>
