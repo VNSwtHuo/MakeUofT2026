@@ -122,6 +122,6 @@
   }
   body {
     @apply bg-background text-foreground;
-    background-color: #FFF8D4;
+    background-color: #fbf8ec;
   }
 }
