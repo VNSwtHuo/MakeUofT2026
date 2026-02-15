@@ -294,7 +294,10 @@ void processSerialInput()
         {
           audioFile.close();
           Serial.print("AUDIO_SAVED:");
-          Serial.println(audioFilename);
+          Serial.print(audioFilename);
+          Serial.print(" (");
+          Serial.print(audioReceivedBytes);
+          Serial.println(" bytes)");
           receivingAudio = false;
         }
       }
@@ -317,6 +320,12 @@ void processSerialInput()
         audioExpectedBytes = line.substring(secondSpace + 1).toInt();
         audioReceivedBytes = 0;
 
+        Serial.print("Receiving audio: ");
+        Serial.print(audioFilename);
+        Serial.print(" (");
+        Serial.print(audioExpectedBytes);
+        Serial.println(" bytes)");
+
         audioFile = SPIFFS.open("/sounds/" + audioFilename, FILE_WRITE);
 
         if (audioFile)
@@ -324,6 +333,15 @@ void processSerialInput()
           receivingAudio = true;
           Serial.println("OK:RECEIVING_AUDIO");
         }
+        else
+        {
+          Serial.println("ERROR:CANNOT_OPEN_FILE");
+        }
+      }
+      else if (line.startsWith("END_SOUND"))
+      {
+        // END_SOUND marker - audio should already be saved by now
+        Serial.println("OK:END_SOUND");
       }
       else if (line.startsWith("SAVE_SETTINGS:"))
       {
@@ -335,6 +353,8 @@ void processSerialInput()
       else if (line.startsWith("RANGES:"))
       {
         rangesData = line.substring(7);
+        Serial.print("Received ranges: ");
+        Serial.println(rangesData);
       }
       else if (line == "END_SETTINGS")
       {
@@ -441,6 +461,15 @@ void checkDistanceRanges()
     if (distance >= currentRanges[i].minDistance &&
         distance <= currentRanges[i].maxDistance)
     {
+      Serial.print("Distance ");
+      Serial.print(distance);
+      Serial.print("cm in range [");
+      Serial.print(currentRanges[i].minDistance);
+      Serial.print("-");
+      Serial.print(currentRanges[i].maxDistance);
+      Serial.print("], triggering: ");
+      Serial.println(currentRanges[i].audioId);
+      
       triggerAudio(currentRanges[i].audioId);
       break;
     }
@@ -463,14 +492,42 @@ void playAudioBlocking(const String &audioId)
 {
   String filepath = "/sounds/" + audioId + ".raw";
 
+  Serial.print("Attempting to play: ");
+  Serial.println(filepath);
+
   if (!SPIFFS.exists(filepath))
   {
-    Serial.println("Audio missing");
+    Serial.print("Audio file missing: ");
+    Serial.println(filepath);
+    
+    // List available files for debugging
+    File root = SPIFFS.open("/sounds");
+    if (root && root.isDirectory())
+    {
+      Serial.println("Available files in /sounds:");
+      File file = root.openNextFile();
+      while (file)
+      {
+        Serial.print("  - ");
+        Serial.println(file.name());
+        file = root.openNextFile();
+      }
+    }
     return;
   }
 
   File file = SPIFFS.open(filepath, FILE_READ);
-  if (!file) return;
+  if (!file)
+  {
+    Serial.println("Failed to open audio file");
+    return;
+  }
+
+  Serial.print("Playing audio: ");
+  Serial.print(filepath);
+  Serial.print(" (");
+  Serial.print(file.size());
+  Serial.println(" bytes)");
 
   isPlayingAudio = true;
 
@@ -478,7 +535,8 @@ void playAudioBlocking(const String &audioId)
 
   while (file.available())
   {
-    uint8_t sample = file.read(); // Volume scaling (50%) 
+    uint8_t sample = file.read();
+    // Volume scaling (30%)
     uint8_t scaledSample = 128 + ((int)sample - 128) * 0.3; 
     dacWrite(dacPin, scaledSample);
     delayMicroseconds(sampleDelayUs);
@@ -487,4 +545,6 @@ void playAudioBlocking(const String &audioId)
   file.close();
   isPlayingAudio = false;
   dacWrite(dacPin, 128);
+  
+  Serial.println("Audio playback complete");
 }

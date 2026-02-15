@@ -345,29 +345,32 @@ export class ESP32Service {
     );
     await this.writer.write(encoder.encode(startMessage));
 
-    // Wait for ESP32 to be ready
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // Wait longer for ESP32 to be ready and open the file
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
     // Send binary audio data in chunks to avoid buffer overflow
-    const chunkSize = 256;
+    const chunkSize = 128; // Reduced from 256 for more reliable transfer
     for (let i = 0; i < audioBytes.length; i += chunkSize) {
       const chunk = audioBytes.slice(
         i,
         Math.min(i + chunkSize, audioBytes.length),
       );
       await this.writer.write(chunk);
-      // Small delay between chunks to let ESP32 process
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      // Longer delay between chunks to let ESP32 process and write to SPIFFS
+      await new Promise((resolve) => setTimeout(resolve, 20));
     }
 
     // Wait before sending end marker
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
     // Send end marker
     const endMessage = `END_SOUND\n`;
     await this.writer.write(encoder.encode(endMessage));
 
     console.log(`[ESP32] Audio file sent: ${filename}`);
+    
+    // Wait for confirmation or a bit longer for processing
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
   /**

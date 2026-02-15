@@ -97,6 +97,9 @@ export async function sendAudioFilesToESP32(
       );
 
       console.log(`[Workflow] Sent audio file: ${prepared.filename} (${prepared.pcmData.length} bytes)`);
+      
+      // Wait between files to let ESP32 finish writing to SPIFFS
+      await new Promise((resolve) => setTimeout(resolve, 200));
     } catch (error) {
       console.error(`[Workflow] Failed to send audio ${audio.id}:`, error);
       throw new Error(`Failed to send audio "${audio.name}": ${(error as Error).message}`);
@@ -133,7 +136,7 @@ export async function saveSettingsToESP32(
     // CRITICAL: Wait for ESP32 to finish processing audio files
     // The ESP32 needs time to close files and be ready for settings commands
     console.log('[Workflow] Waiting for ESP32 to be ready for settings...');
-    await new Promise((resolve) => setTimeout(resolve, 1000)); // 1 second delay
+    await new Promise((resolve) => setTimeout(resolve, 2000)); // Increased to 2 seconds
 
     // Stage 2: Send settings
     if (onProgress) onProgress('Saving settings...', 60);
