@@ -10,13 +10,13 @@ export class ESP32Service {
 
   async connect(): Promise<boolean> {
     try {
-      if (!navigator.serial) {
+      if (!(navigator as any).serial) {
         throw new Error("Web Serial API not supported in this browser");
       }
 
       // Reuse already-granted ports if available
       if (!this.port) {
-        const ports = await navigator.serial.getPorts();
+        const ports = await (navigator as any).serial.getPorts();
         if (ports && ports.length > 0) {
           this.port = ports[0];
         }
@@ -24,7 +24,7 @@ export class ESP32Service {
 
       // If no existing port, ask the user to pick one
       if (!this.port) {
-        this.port = await navigator.serial.requestPort();
+        this.port = await (navigator as any).serial.requestPort();
       }
 
       // Try to open the port if it's not already open. Some implementations
@@ -53,8 +53,8 @@ export class ESP32Service {
       }
 
       // Listen for disconnect events
-      if (this.port && navigator.serial) {
-        navigator.serial.addEventListener('disconnect', (event: any) => {
+      if (this.port && (navigator as any).serial) {
+        (navigator as any).serial.addEventListener('disconnect', (event: any) => {
           if (event.target === this.port) {
             this.handleDisconnect();
           }
@@ -131,7 +131,7 @@ export class ESP32Service {
     let buffer = "";
 
     try {
-      while (true) {
+      while (this.reader) {
         const { value, done } = await this.reader.read();
         if (done) break;
 
