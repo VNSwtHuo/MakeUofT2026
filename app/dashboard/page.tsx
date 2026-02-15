@@ -18,6 +18,7 @@ interface AudioFile {
   id: string;
   name: string;
   url?: string;
+  file?: File;
   isPreset?: boolean;
   frequency?: number;
   duration?: number;
@@ -160,7 +161,7 @@ export default function Dashboard() {
   // Initialize serial connection on mount (if port was previously selected)
   useEffect(() => {
     // No auto-connect: user must click Connect ESP32 (Web Serial requires gesture)
-    
+
     // Set up disconnect listener
     esp32Service.onDisconnect(() => {
       setSerialConnected(false);
@@ -169,7 +170,7 @@ export default function Dashboard() {
       waitingForRFIDRef.current = false;
       alert("ESP32 has been disconnected. Please reconnect to continue.");
     });
-    
+
     return () => {};
   }, []);
 
@@ -183,7 +184,7 @@ export default function Dashboard() {
         setWaitingForRFID(true);
         waitingForRFIDRef.current = true;
         setSerialStatus("Connected - Please scan RFID card");
-        
+
         // Set up disconnect handler
         esp32Service.onDisconnect(() => {
           setSerialConnected(false);
@@ -193,7 +194,7 @@ export default function Dashboard() {
           setIsConnecting(false);
           alert("ESP32 has been disconnected. Please reconnect to continue.");
         });
-        
+
         esp32Service.onRFIDScan((uid: string) => {
           if (waitingForRFIDRef.current) {
             setUserId(uid);
@@ -203,11 +204,11 @@ export default function Dashboard() {
             waitingForRFIDRef.current = false;
             setSerialStatus(`Connected - User: ${uid}`);
             setIsConnecting(false);
-            
+
             // Load user settings
             fetch(`/api/settings?userId=${encodeURIComponent(uid)}`)
-              .then(resp => resp.json())
-              .then(data => {
+              .then((resp) => resp.json())
+              .then((data) => {
                 if (data && Array.isArray(data.ranges)) {
                   const mapped = data.ranges.map((r: any, idx: number) => ({
                     id: r.id || `range-${idx}`,
@@ -219,10 +220,10 @@ export default function Dashboard() {
                   alert(`Loaded settings for user ${uid}`);
                 }
               })
-              .catch(err => console.error("Failed to load settings", err));
+              .catch((err) => console.error("Failed to load settings", err));
           }
         });
-        
+
         esp32Service.onRadarData((angle: number, distance: number) => {
           // optional: handle radar stream updates
         });
@@ -285,13 +286,13 @@ export default function Dashboard() {
     const onRfid = async (uid: string) => {
       // Only handle if not waiting for manual connection RFID
       if (waitingForRFIDRef.current) return;
-      
+
       // UID comes in as hex bytes (e.g. "04 A3 2B ...") - use as-is
       setCurrentUserId(uid);
       setUserId(uid);
       setSignedInViaESP32(true);
       setSerialConnected(true);
-      
+
       try {
         const resp = await fetch(
           `/api/settings?userId=${encodeURIComponent(uid)}`,
@@ -471,6 +472,7 @@ export default function Dashboard() {
         frequency: audio.frequency,
         period: audio.period,
         url: audio.url,
+        file: audio.file,
       }));
 
       // Get only the audio files that are used in ranges
@@ -527,7 +529,8 @@ export default function Dashboard() {
       let storageInfo = "";
       if (response.ok) {
         const saveResult = await response.json();
-        const storageType = saveResult.storage === 'mongodb' ? 'cloud database' : 'local file';
+        const storageType =
+          saveResult.storage === "mongodb" ? "cloud database" : "local file";
         storageInfo = ` (saved to ${storageType})`;
       } else {
         console.warn(
@@ -536,7 +539,9 @@ export default function Dashboard() {
         storageInfo = " (server save failed, but ESP32 updated)";
       }
 
-      alert(`Settings and audio files successfully loaded to ESP32!${storageInfo}`);
+      alert(
+        `Settings and audio files successfully loaded to ESP32!${storageInfo}`,
+      );
     } catch (error) {
       console.error("Save settings error:", error);
       alert(`Failed to save settings: ${(error as Error).message}`);
@@ -553,28 +558,34 @@ export default function Dashboard() {
     }
 
     try {
-      console.log('[Load Settings] Fetching for userId:', userId);
-      const response = await fetch(`/api/settings?userId=${encodeURIComponent(userId)}`);
-      
-      console.log('[Load Settings] Response status:', response.status);
-      
+      console.log("[Load Settings] Fetching for userId:", userId);
+      const response = await fetch(
+        `/api/settings?userId=${encodeURIComponent(userId)}`,
+      );
+
+      console.log("[Load Settings] Response status:", response.status);
+
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        console.error('[Load Settings] Error response:', errorData);
-        
+        console.error("[Load Settings] Error response:", errorData);
+
         if (response.status === 404) {
-          alert("No saved settings found for this user. Please save settings first.");
+          alert(
+            "No saved settings found for this user. Please save settings first.",
+          );
         } else if (response.status === 503) {
           alert("Database not configured. Settings cannot be loaded.");
         } else {
-          alert(`Failed to load settings: ${errorData.error || 'Unknown error'}`);
+          alert(
+            `Failed to load settings: ${errorData.error || "Unknown error"}`,
+          );
         }
         return;
       }
 
       const data = await response.json();
-      console.log('[Load Settings] Received data:', data);
-      
+      console.log("[Load Settings] Received data:", data);
+
       if (data.ranges && data.ranges.length > 0) {
         setDistanceTriggers(
           data.ranges.map((range: any) => ({
@@ -585,8 +596,11 @@ export default function Dashboard() {
             audioName: range.soundId || range.audiofile,
           })),
         );
-        const storageType = data.storage === 'mongodb' ? 'cloud database' : 'local file';
-        alert(`Settings loaded successfully from ${storageType}! Found ${data.ranges.length} range(s).`);
+        const storageType =
+          data.storage === "mongodb" ? "cloud database" : "local file";
+        alert(
+          `Settings loaded successfully from ${storageType}! Found ${data.ranges.length} range(s).`,
+        );
       } else {
         alert("No ranges found in saved settings.");
       }
@@ -863,10 +877,18 @@ export default function Dashboard() {
       const selectedVoiceObj = ELEVENLABS_VOICES.find(
         (v) => v.id === selectedVoice,
       );
+      const safeId = `tts-${Date.now().toString(36)}-${Math.random()
+        .toString(36)
+        .slice(2, 8)}`;
+      const file = new File([audioBlob], `${safeId}.mp3`, {
+        type: audioBlob.type || "audio/mpeg",
+      });
+
       const newAudio: AudioFile = {
-        id: `tts-${Date.now()}-${Math.random()}`,
+        id: safeId,
         name: `Voice: "${text.substring(0, 30)}${text.length > 30 ? "..." : ""}"`,
         url: audioUrl,
+        file,
         isPreset: false,
         voiceId: selectedVoice,
         voiceName: selectedVoiceObj?.name,
@@ -921,10 +943,18 @@ export default function Dashboard() {
       const audioBlob = await response.blob();
       const url = URL.createObjectURL(audioBlob);
 
+      const safeId = `sfx-${Date.now().toString(36)}-${Math.random()
+        .toString(36)
+        .slice(2, 8)}`;
+      const file = new File([audioBlob], `${safeId}.mp3`, {
+        type: audioBlob.type || "audio/mpeg",
+      });
+
       const newAudio: AudioFile = {
-        id: `sfx-${Date.now()}-${Math.random()}`,
+        id: safeId,
         name: `SFX: ${sfxCustomText}`,
         url: url,
+        file,
         isPreset: false,
         sourceType: "ai-sfx",
       };
@@ -954,10 +984,14 @@ export default function Dashboard() {
       const reader = new FileReader();
       reader.onload = (event) => {
         const url = event.target?.result as string;
+        const safeId = `upload-${Date.now().toString(36)}-${Math.random()
+          .toString(36)
+          .slice(2, 8)}`;
         const newAudio: AudioFile = {
-          id: `upload-${Date.now()}-${Math.random()}`,
+          id: safeId,
           name: file.name,
           url,
+          file,
           isPreset: false,
           sourceType: "uploaded",
         };
@@ -1069,7 +1103,11 @@ export default function Dashboard() {
               size="lg"
               className="bg-[#435663] text-white hover:bg-[#435663]/90 whitespace-nowrap"
             >
-              {isConnecting && waitingForRFID ? "Waiting for RFID scan..." : isConnecting ? "Connecting..." : "Connect ESP32"}
+              {isConnecting && waitingForRFID
+                ? "Waiting for RFID scan..."
+                : isConnecting
+                  ? "Connecting..."
+                  : "Connect ESP32"}
             </Button>
           )}
           <Button
