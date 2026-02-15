@@ -431,33 +431,66 @@ export default function Dashboard() {
       </div>
 
       <div className="max-w-6xl mx-auto w-full space-y-8">
-        {/* Upload Section */}
-        <div className="bg-[#A3B087]/15 border-2 border-dashed border-[#A3B087] rounded-xl p-8">
-          <div className="space-y-4">
-            <h2 className="text-2xl font-semibold text-[#313647] flex items-center gap-2">
-              <Upload className="size-6" />
-              Upload Custom Audio
+        {/* Upload and Preset Sounds - Side by Side */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Upload Section */}
+          <div className="bg-[#A3B087]/15 border-2 border-dashed border-[#A3B087] rounded-xl p-8 flex items-center justify-center">
+            <div className="space-y-4 text-center">
+              <h2 className="text-2xl font-semibold text-[#313647] flex items-center justify-center gap-2">
+                <Upload className="size-6" />
+                Upload Custom Audio
+              </h2>
+              <p className="text-[#A3B087]">
+                Upload your own audio files to use as buzzer sounds
+              </p>
+              <div className="flex justify-center gap-3">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="audio/*"
+                  multiple
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+                <Button
+                  onClick={() => fileInputRef.current?.click()}
+                  size="lg"
+                  className="bg-[#435663] text-white hover:bg-[#435663]/90"
+                >
+                  <Upload className="mr-2 size-4" />
+                  Choose Audio Files
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          {/* Preset Buzzer Sounds */}
+          <div className="bg-white border border-[#A3B087]/30 rounded-xl p-8">
+            <h2 className="text-2xl font-semibold text-[#313647] mb-6 flex items-center gap-2">
+              <Volume2 className="size-6" />
+              Preset Buzzer Sounds
             </h2>
-            <p className="text-[#A3B087]">
-              Upload your own audio files to use as buzzer sounds
-            </p>
-            <div className="flex gap-3">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="audio/*"
-                multiple
-                onChange={handleFileUpload}
-                className="hidden"
-              />
-              <Button
-                onClick={() => fileInputRef.current?.click()}
-                size="lg"
-                className="bg-[#435663] text-white hover:bg-[#435663]/90"
-              >
-                <Upload className="mr-2 size-4" />
-                Choose Audio Files
-              </Button>
+            <div className="grid grid-cols-2 gap-3">
+              {PRESET_BUZZER_SOUNDS.map((audio) => (
+                <Button
+                  key={audio.id}
+                  onClick={() => playSound(audio)}
+                  className={`h-24 flex flex-col items-center justify-center transition-colors ${
+                    activeSound === audio.id
+                      ? 'bg-[#435663] text-white border-[#435663]'
+                      : 'bg-[#A3B087]/10 hover:bg-[#A3B087]/20 text-[#313647] border border-[#A3B087]/30'
+                  } rounded-lg`}
+                >
+                  <Play className="size-5 mb-1" />
+                  <span className="text-xs font-medium text-center leading-tight">{audio.name}</span>
+                  <span className="text-xs mt-1 opacity-75">
+                    {audio.period && `${audio.period}s`}
+                  </span>
+                  {activeSound === audio.id && (
+                    <span className="text-xs mt-1 font-semibold">● Playing</span>
+                  )}
+                </Button>
+              ))}
             </div>
           </div>
         </div>
@@ -500,6 +533,115 @@ export default function Dashboard() {
             </div>
           </div>
         )}
+
+        {/* Custom Frequency Generator */}
+        <div className="bg-white border border-[#A3B087]/30 rounded-xl p-8">
+          <h2 className="text-2xl font-semibold text-[#313647] mb-6 flex items-center gap-2">
+            <Volume2 className="size-6" />
+            Custom Tone Generator
+          </h2>
+          <div className="space-y-6">
+            {/* Frequency Slider */}
+            <div className="space-y-3">
+              <div className="flex justify-between items-center gap-4">
+                <label className="text-lg font-medium text-[#313647]">
+                  Frequency: <span className="text-[#A3B087]">{customFrequency} Hz</span>
+                </label>
+                <input
+                  type="number"
+                  min="20"
+                  max="2000"
+                  value={customFrequency}
+                  onChange={(e) => setCustomFrequency(e.target.value)}
+                  onBlur={(e) => {
+                    const val = parseInt(e.target.value);
+                    if (isNaN(val)) {
+                      setCustomFrequency(500);
+                    } else if (val < 20) {
+                      setCustomFrequency(20);
+                    } else if (val > 2000) {
+                      setCustomFrequency(2000);
+                    }
+                  }}
+                  className="w-24 px-3 py-2 border border-[#A3B087]/30 rounded-lg text-[#313647] font-medium"
+                />
+              </div>
+              <input
+                type="range"
+                min="20"
+                max="2000"
+                value={typeof customFrequency === 'string' ? parseInt(customFrequency) || 500 : customFrequency}
+                onChange={(e) => setCustomFrequency(parseInt(e.target.value))}
+                className="w-full h-2 bg-[#A3B087]/30 rounded-lg appearance-none cursor-pointer accent-[#435663]"
+              />
+              <div className="flex justify-between text-sm text-[#A3B087]">
+                <span>20 Hz</span>
+                <span>2000 Hz</span>
+              </div>
+            </div>
+
+            {/* Period Slider */}
+            <div className="space-y-3">
+              <div className="flex justify-between items-center gap-4">
+                <label className="text-lg font-medium text-[#313647]">
+                  Repeat Period: <span className="text-[#A3B087]">{typeof customPeriod === 'string' ? customPeriod : customPeriod.toFixed(2)} seconds</span>
+                </label>
+                <input
+                  type="number"
+                  min="0.1"
+                  max="5"
+                  step="0.1"
+                  value={customPeriod}
+                  onChange={(e) => setCustomPeriod(e.target.value)}
+                  onBlur={(e) => {
+                    const val = parseFloat(e.target.value);
+                    if (isNaN(val)) {
+                      setCustomPeriod(0.5);
+                    } else if (val < 0.1) {
+                      setCustomPeriod(0.1);
+                    } else if (val > 5) {
+                      setCustomPeriod(5);
+                    }
+                  }}
+                  className="w-24 px-3 py-2 border border-[#A3B087]/30 rounded-lg text-[#313647] font-medium"
+                />
+              </div>
+              <input
+                type="range"
+                min="0.1"
+                max="5"
+                step="0.1"
+                value={typeof customPeriod === 'string' ? parseFloat(customPeriod) || 0.5 : customPeriod}
+                onChange={(e) => setCustomPeriod(parseFloat(e.target.value))}
+                className="w-full h-2 bg-[#A3B087]/30 rounded-lg appearance-none cursor-pointer accent-[#435663]"
+              />
+              <div className="flex justify-between text-sm text-[#A3B087]">
+                <span>0.1s</span>
+                <span>5s</span>
+              </div>
+            </div>
+
+            {/* Play Buttons */}
+            <div className="flex gap-3">
+              <Button
+                onClick={handlePlayCustomTone}
+                size="lg"
+                className="flex-1 bg-[#435663] text-white hover:bg-[#435663]/90"
+              >
+                <Play className="mr-2 size-5" />
+                Play Once
+              </Button>
+              <Button
+                onClick={handlePlayRepeatingTone}
+                size="lg"
+                className={`flex-1 ${isPlayingRepeat ? 'bg-red-600 hover:bg-red-700' : 'bg-[#435663] hover:bg-[#435663]/90'} text-white`}
+              >
+                <Play className="mr-2 size-5" />
+                {isPlayingRepeat ? 'Stop Repeat' : 'Play Repeat'}
+              </Button>
+            </div>
+          </div>
+        </div>
 
         {/* Distance Range Audio Assignment */}
         <div className="bg-white border border-[#A3B087]/30 rounded-xl p-8">
@@ -682,144 +824,6 @@ export default function Dashboard() {
                   </select>
                 </div>
               </div>
-            ))}
-          </div>
-        </div>
-        {/* Custom Frequency Generator */}
-        <div className="bg-white border border-[#A3B087]/30 rounded-xl p-8">
-          <h2 className="text-2xl font-semibold text-[#313647] mb-6 flex items-center gap-2">
-            <Volume2 className="size-6" />
-            Custom Tone Generator
-          </h2>
-          <div className="space-y-6">
-            {/* Frequency Slider */}
-            <div className="space-y-3">
-              <div className="flex justify-between items-center gap-4">
-                <label className="text-lg font-medium text-[#313647]">
-                  Frequency: <span className="text-[#A3B087]">{customFrequency} Hz</span>
-                </label>
-                <input
-                  type="number"
-                  min="20"
-                  max="2000"
-                  value={customFrequency}
-                  onChange={(e) => setCustomFrequency(e.target.value)}
-                  onBlur={(e) => {
-                    const val = parseInt(e.target.value);
-                    if (isNaN(val)) {
-                      setCustomFrequency(500);
-                    } else if (val < 20) {
-                      setCustomFrequency(20);
-                    } else if (val > 2000) {
-                      setCustomFrequency(2000);
-                    }
-                  }}
-                  className="w-24 px-3 py-2 border border-[#A3B087]/30 rounded-lg text-[#313647] font-medium"
-                />
-              </div>
-              <input
-                type="range"
-                min="20"
-                max="2000"
-                value={typeof customFrequency === 'string' ? parseInt(customFrequency) || 500 : customFrequency}
-                onChange={(e) => setCustomFrequency(parseInt(e.target.value))}
-                className="w-full h-2 bg-[#A3B087]/30 rounded-lg appearance-none cursor-pointer accent-[#435663]"
-              />
-              <div className="flex justify-between text-sm text-[#A3B087]">
-                <span>20 Hz</span>
-                <span>2000 Hz</span>
-              </div>
-            </div>
-
-            {/* Period Slider */}
-            <div className="space-y-3">
-              <div className="flex justify-between items-center gap-4">
-                <label className="text-lg font-medium text-[#313647]">
-                  Repeat Period: <span className="text-[#A3B087]">{typeof customPeriod === 'string' ? customPeriod : customPeriod.toFixed(2)} seconds</span>
-                </label>
-                <input
-                  type="number"
-                  min="0.1"
-                  max="5"
-                  step="0.1"
-                  value={customPeriod}
-                  onChange={(e) => setCustomPeriod(e.target.value)}
-                  onBlur={(e) => {
-                    const val = parseFloat(e.target.value);
-                    if (isNaN(val)) {
-                      setCustomPeriod(0.5);
-                    } else if (val < 0.1) {
-                      setCustomPeriod(0.1);
-                    } else if (val > 5) {
-                      setCustomPeriod(5);
-                    }
-                  }}
-                  className="w-24 px-3 py-2 border border-[#A3B087]/30 rounded-lg text-[#313647] font-medium"
-                />
-              </div>
-              <input
-                type="range"
-                min="0.1"
-                max="5"
-                step="0.1"
-                value={typeof customPeriod === 'string' ? parseFloat(customPeriod) || 0.5 : customPeriod}
-                onChange={(e) => setCustomPeriod(parseFloat(e.target.value))}
-                className="w-full h-2 bg-[#A3B087]/30 rounded-lg appearance-none cursor-pointer accent-[#435663]"
-              />
-              <div className="flex justify-between text-sm text-[#A3B087]">
-                <span>0.1s</span>
-                <span>5s</span>
-              </div>
-            </div>
-
-            {/* Play Buttons */}
-            <div className="flex gap-3">
-              <Button
-                onClick={handlePlayCustomTone}
-                size="lg"
-                className="flex-1 bg-[#435663] text-white hover:bg-[#435663]/90"
-              >
-                <Play className="mr-2 size-5" />
-                Play Once
-              </Button>
-              <Button
-                onClick={handlePlayRepeatingTone}
-                size="lg"
-                className={`flex-1 ${isPlayingRepeat ? 'bg-red-600 hover:bg-red-700' : 'bg-[#435663] hover:bg-[#435663]/90'} text-white`}
-              >
-                <Play className="mr-2 size-5" />
-                {isPlayingRepeat ? 'Stop Repeat' : 'Play Repeat'}
-              </Button>
-            </div>
-          </div>
-        </div>
-
-        {/* Preset Buzzer Sounds */}
-        <div className="bg-white border border-[#A3B087]/30 rounded-xl p-8">
-          <h2 className="text-2xl font-semibold text-[#313647] mb-6 flex items-center gap-2">
-            <Volume2 className="size-6" />
-            Preset Buzzer Sounds
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {PRESET_BUZZER_SOUNDS.map((audio) => (
-              <Button
-                key={audio.id}
-                onClick={() => playSound(audio)}
-                className={`h-28 flex flex-col items-center justify-center transition-colors ${
-                  activeSound === audio.id
-                    ? 'bg-[#435663] text-white border-[#435663]'
-                    : 'bg-[#A3B087]/10 hover:bg-[#A3B087]/20 text-[#313647] border border-[#A3B087]/30'
-                } rounded-lg`}
-              >
-                <Play className="size-6 mb-1" />
-                <span className="text-xs font-medium text-center leading-tight">{audio.name}</span>
-                <span className="text-xs mt-1 opacity-75">
-                  {audio.period && `Repeat: ${audio.period}s`}
-                </span>
-                {activeSound === audio.id && (
-                  <span className="text-xs mt-1 font-semibold">● Playing</span>
-                )}
-              </Button>
             ))}
           </div>
         </div>
