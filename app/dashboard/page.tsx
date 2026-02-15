@@ -60,7 +60,9 @@ const PRESET_BUZZER_SOUNDS: AudioFile[] = [
 
 // Function to play a tone using Web Audio API
 const playTone = (frequency: number, duration: number) => {
-  const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+  const audioContext = new (
+    window.AudioContext || (window as any).webkitAudioContext
+  )();
   const oscillator = audioContext.createOscillator();
   const gainNode = audioContext.createGain();
 
@@ -71,7 +73,10 @@ const playTone = (frequency: number, duration: number) => {
   oscillator.type = "sine";
 
   gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-  gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
+  gainNode.gain.exponentialRampToValueAtTime(
+    0.01,
+    audioContext.currentTime + duration,
+  );
 
   oscillator.start(audioContext.currentTime);
   oscillator.stop(audioContext.currentTime + duration);
@@ -82,7 +87,9 @@ export default function Dashboard() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const repeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const presetRepeatIntervalsRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+  const presetRepeatIntervalsRef = useRef<Map<string, NodeJS.Timeout>>(
+    new Map(),
+  );
   const [uploadedAudios, setUploadedAudios] = useState<AudioFile[]>([]);
   const [activeSound, setActiveSound] = useState<string | null>(null);
   const [customFrequency, setCustomFrequency] = useState<number | string>(500);
@@ -106,18 +113,21 @@ export default function Dashboard() {
   // Update playback progress animation
   useEffect(() => {
     if (!isPlayingSequence) return;
-    
+
     const updateProgress = () => {
       if (playbackStartTimeRef.current && playbackDurationRef.current) {
         const elapsed = Date.now() - playbackStartTimeRef.current;
-        const progress = Math.min((elapsed / playbackDurationRef.current) * 100, 100);
+        const progress = Math.min(
+          (elapsed / playbackDurationRef.current) * 100,
+          100,
+        );
         setPlaybackProgress(progress);
       }
       if (isPlayingSequence) {
         requestAnimationFrame(updateProgress);
       }
     };
-    
+
     const animationId = requestAnimationFrame(updateProgress);
     return () => cancelAnimationFrame(animationId);
   }, [isPlayingSequence]);
@@ -138,19 +148,36 @@ export default function Dashboard() {
     };
   }, []);
 
-  const updateDistanceTrigger = (triggerId: string, audioId: string | null, audioName?: string) => {
+  const updateDistanceTrigger = (
+    triggerId: string,
+    audioId: string | null,
+    audioName?: string,
+  ) => {
     setDistanceTriggers((prev) =>
       prev.map((trigger) =>
-        trigger.id === triggerId
-          ? { ...trigger, audioId, audioName }
-          : trigger
-      )
+        trigger.id === triggerId ? { ...trigger, audioId, audioName } : trigger,
+      ),
     );
   };
 
+  async function saveUserSettings(userId: string, settings: any) {
+    await fetch("/user", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        userId,
+        settings,
+      }),
+    });
+  }
+
   const addCustomRange = () => {
-    const minVal = typeof newRangeMin === 'string' ? parseFloat(newRangeMin) : newRangeMin;
-    const maxVal = typeof newRangeMax === 'string' ? parseFloat(newRangeMax) : newRangeMax;
+    const minVal =
+      typeof newRangeMin === "string" ? parseFloat(newRangeMin) : newRangeMin;
+    const maxVal =
+      typeof newRangeMax === "string" ? parseFloat(newRangeMax) : newRangeMax;
 
     if (isNaN(minVal) || isNaN(maxVal)) {
       alert("Please enter valid numbers");
@@ -172,7 +199,7 @@ export default function Dashboard() {
       (trigger) =>
         (minVal >= trigger.minDistance && minVal < trigger.maxDistance) ||
         (maxVal > trigger.minDistance && maxVal <= trigger.maxDistance) ||
-        (minVal <= trigger.minDistance && maxVal >= trigger.maxDistance)
+        (minVal <= trigger.minDistance && maxVal >= trigger.maxDistance),
     );
 
     if (overlaps) {
@@ -187,13 +214,17 @@ export default function Dashboard() {
       audioId: null,
     };
 
-    setDistanceTriggers((prev) => [...prev, newTrigger].sort((a, b) => a.minDistance - b.minDistance));
+    setDistanceTriggers((prev) =>
+      [...prev, newTrigger].sort((a, b) => a.minDistance - b.minDistance),
+    );
     setNewRangeMin(0.1);
     setNewRangeMax(0.5);
   };
 
   const deleteCustomRange = (triggerId: string) => {
-    setDistanceTriggers((prev) => prev.filter((trigger) => trigger.id !== triggerId));
+    setDistanceTriggers((prev) =>
+      prev.filter((trigger) => trigger.id !== triggerId),
+    );
   };
 
   const playDistanceSequence = () => {
@@ -237,7 +268,7 @@ export default function Dashboard() {
       const trigger = triggersWithAudio[currentIndex];
       setPlayingTrigger(trigger.id);
       const audio = [...PRESET_BUZZER_SOUNDS, ...uploadedAudios].find(
-        (a) => a.id === trigger.audioId
+        (a) => a.id === trigger.audioId,
       );
 
       if (audio) {
@@ -246,17 +277,17 @@ export default function Dashboard() {
         const rangeSize = trigger.maxDistance - trigger.minDistance;
         const durationSeconds = rangeSize * 2; // 2 seconds per meter
         const duration = durationSeconds * 1000;
-        
+
         // Set playback timing for progress animation
         playbackStartTimeRef.current = Date.now();
         playbackDurationRef.current = duration;
         setPlaybackProgress(0);
-        
+
         if (audio.isPreset && audio.frequency && audio.period) {
           // Play preset tone with its original period repeated for proportional duration
           const startTime = Date.now();
           playTone(audio.frequency!, 0.1); // Play immediately
-          
+
           const playInterval = setInterval(() => {
             if (Date.now() - startTime >= duration) {
               clearInterval(playInterval);
@@ -276,7 +307,10 @@ export default function Dashboard() {
       currentIndex++;
       const rangeSize = trigger.maxDistance - trigger.minDistance;
       const durationSeconds = rangeSize * 2; // 2 seconds per meter
-      sequenceIntervalRef.current = setTimeout(playNextTrigger, (durationSeconds + 0.5) * 1000); // Add 0.5s gap
+      sequenceIntervalRef.current = setTimeout(
+        playNextTrigger,
+        (durationSeconds + 0.5) * 1000,
+      ); // Add 0.5s gap
     };
 
     playNextTrigger();
@@ -284,18 +318,21 @@ export default function Dashboard() {
 
   const getAudioForDistance = (distanceMeters: number): AudioFile | null => {
     const trigger = distanceTriggers.find(
-      (t) => distanceMeters >= t.minDistance && distanceMeters <= t.maxDistance
+      (t) => distanceMeters >= t.minDistance && distanceMeters <= t.maxDistance,
     );
-    
+
     if (!trigger || !trigger.audioId) return null;
-    
+
     const allAudios = [...PRESET_BUZZER_SOUNDS, ...uploadedAudios];
     return allAudios.find((audio) => audio.id === trigger.audioId) || null;
   };
 
   const handlePlayCustomTone = () => {
-    const freq = typeof customFrequency === 'string' ? parseInt(customFrequency) : customFrequency;
-    
+    const freq =
+      typeof customFrequency === "string"
+        ? parseInt(customFrequency)
+        : customFrequency;
+
     if (!isNaN(freq)) {
       playTone(freq, 0.1); // 100ms tone burst
       setActiveSound("custom");
@@ -313,21 +350,27 @@ export default function Dashboard() {
       setActiveSound(null);
     } else {
       // Start repeating tone
-      const freq = typeof customFrequency === 'string' ? parseInt(customFrequency) : customFrequency;
-      const period = typeof customPeriod === 'string' ? parseFloat(customPeriod) : customPeriod;
-      
+      const freq =
+        typeof customFrequency === "string"
+          ? parseInt(customFrequency)
+          : customFrequency;
+      const period =
+        typeof customPeriod === "string"
+          ? parseFloat(customPeriod)
+          : customPeriod;
+
       if (!isNaN(freq) && !isNaN(period)) {
         setIsPlayingRepeat(true);
         setActiveSound("custom");
-        
+
         // Play immediately
         playTone(freq, 0.1);
-        
+
         // Then set up repeating interval
         const intervalId = setInterval(() => {
           playTone(freq, 0.1);
         }, period * 1000);
-        
+
         repeatIntervalRef.current = intervalId;
       }
     }
@@ -381,18 +424,18 @@ export default function Dashboard() {
       clearInterval(intervalId);
     });
     presetRepeatIntervalsRef.current.clear();
-    
+
     setActiveSound(audio.id);
-    
+
     if (audio.isPreset && audio.frequency && audio.period) {
       // Play preset tone with repetition
       playTone(audio.frequency, 0.1); // 100ms tone burst
-      
+
       // Set up repeating interval
       const intervalId = setInterval(() => {
         playTone(audio.frequency!, 0.1);
       }, audio.period * 1000);
-      
+
       presetRepeatIntervalsRef.current.set(audio.id, intervalId);
     } else if (audio.url) {
       // Play uploaded file
@@ -416,7 +459,9 @@ export default function Dashboard() {
       {/* Header */}
       <div className="flex justify-between items-center mb-8">
         <div className="text-center flex-1">
-          <h1 className="text-[#313647] text-4xl font-bold">Audio Control Panel</h1>
+          <h1 className="text-[#313647] text-4xl font-bold">
+            Audio Control Panel
+          </h1>
           <p className="text-[#A3B087] mt-2">Radar Navigation System</p>
         </div>
         <Button
@@ -477,17 +522,21 @@ export default function Dashboard() {
                   onClick={() => playSound(audio)}
                   className={`h-24 flex flex-col items-center justify-center transition-colors ${
                     activeSound === audio.id
-                      ? 'bg-[#435663] text-white border-[#435663]'
-                      : 'bg-[#A3B087]/10 hover:bg-[#A3B087]/20 text-[#313647] border border-[#A3B087]/30'
+                      ? "bg-[#435663] text-white border-[#435663]"
+                      : "bg-[#A3B087]/10 hover:bg-[#A3B087]/20 text-[#313647] border border-[#A3B087]/30"
                   } rounded-lg`}
                 >
                   <Play className="size-5 mb-1" />
-                  <span className="text-xs font-medium text-center leading-tight">{audio.name}</span>
+                  <span className="text-xs font-medium text-center leading-tight">
+                    {audio.name}
+                  </span>
                   <span className="text-xs mt-1 opacity-75">
                     {audio.period && `${audio.period}s`}
                   </span>
                   {activeSound === audio.id && (
-                    <span className="text-xs mt-1 font-semibold">● Playing</span>
+                    <span className="text-xs mt-1 font-semibold">
+                      ● Playing
+                    </span>
                   )}
                 </Button>
               ))}
@@ -508,12 +557,16 @@ export default function Dashboard() {
                   className="flex items-center justify-between bg-[#FFF8D4] p-4 rounded-lg border border-[#A3B087]/20"
                 >
                   <div className="flex-1 min-w-0">
-                    <p className="font-medium text-[#313647] truncate">{audio.name}</p>
+                    <p className="font-medium text-[#313647] truncate">
+                      {audio.name}
+                    </p>
                   </div>
                   <div className="flex gap-2 ml-4">
                     <Button
                       onClick={() => playSound(audio)}
-                      disabled={activeSound !== null && activeSound !== audio.id}
+                      disabled={
+                        activeSound !== null && activeSound !== audio.id
+                      }
                       size="sm"
                       variant="outline"
                       className="bg-[#435663] text-white hover:bg-[#435663]/90"
@@ -545,7 +598,8 @@ export default function Dashboard() {
             <div className="space-y-3">
               <div className="flex justify-between items-center gap-4">
                 <label className="text-lg font-medium text-[#313647]">
-                  Frequency: <span className="text-[#A3B087]">{customFrequency} Hz</span>
+                  Frequency:{" "}
+                  <span className="text-[#A3B087]">{customFrequency} Hz</span>
                 </label>
                 <input
                   type="number"
@@ -570,7 +624,11 @@ export default function Dashboard() {
                 type="range"
                 min="20"
                 max="2000"
-                value={typeof customFrequency === 'string' ? parseInt(customFrequency) || 500 : customFrequency}
+                value={
+                  typeof customFrequency === "string"
+                    ? parseInt(customFrequency) || 500
+                    : customFrequency
+                }
                 onChange={(e) => setCustomFrequency(parseInt(e.target.value))}
                 className="w-full h-2 bg-[#A3B087]/30 rounded-lg appearance-none cursor-pointer accent-[#435663]"
               />
@@ -584,7 +642,13 @@ export default function Dashboard() {
             <div className="space-y-3">
               <div className="flex justify-between items-center gap-4">
                 <label className="text-lg font-medium text-[#313647]">
-                  Repeat Period: <span className="text-[#A3B087]">{typeof customPeriod === 'string' ? customPeriod : customPeriod.toFixed(2)} seconds</span>
+                  Repeat Period:{" "}
+                  <span className="text-[#A3B087]">
+                    {typeof customPeriod === "string"
+                      ? customPeriod
+                      : customPeriod.toFixed(2)}{" "}
+                    seconds
+                  </span>
                 </label>
                 <input
                   type="number"
@@ -611,7 +675,11 @@ export default function Dashboard() {
                 min="0.1"
                 max="5"
                 step="0.1"
-                value={typeof customPeriod === 'string' ? parseFloat(customPeriod) || 0.5 : customPeriod}
+                value={
+                  typeof customPeriod === "string"
+                    ? parseFloat(customPeriod) || 0.5
+                    : customPeriod
+                }
                 onChange={(e) => setCustomPeriod(parseFloat(e.target.value))}
                 className="w-full h-2 bg-[#A3B087]/30 rounded-lg appearance-none cursor-pointer accent-[#435663]"
               />
@@ -634,10 +702,10 @@ export default function Dashboard() {
               <Button
                 onClick={handlePlayRepeatingTone}
                 size="lg"
-                className={`flex-1 ${isPlayingRepeat ? 'bg-red-600 hover:bg-red-700' : 'bg-[#435663] hover:bg-[#435663]/90'} text-white`}
+                className={`flex-1 ${isPlayingRepeat ? "bg-red-600 hover:bg-red-700" : "bg-[#435663] hover:bg-[#435663]/90"} text-white`}
               >
                 <Play className="mr-2 size-5" />
-                {isPlayingRepeat ? 'Stop Repeat' : 'Play Repeat'}
+                {isPlayingRepeat ? "Stop Repeat" : "Play Repeat"}
               </Button>
             </div>
           </div>
@@ -650,15 +718,18 @@ export default function Dashboard() {
             Distance-Based Audio Triggers
           </h2>
           <p className="text-[#A3B087] mb-6">
-            Assign audio files to play when objects are detected within distance ranges (3cm - 4m)
+            Assign audio files to play when objects are detected within distance
+            ranges (3cm - 4m)
           </p>
-          
+
           {/* Visual Range Display */}
           <div className="mb-8 p-4 bg-[#FFF8D4] rounded-lg border border-[#A3B087]/20">
             <div className="flex items-center justify-between mb-4 px-2">
               <div className="flex-1">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-[#313647]">3cm</span>
+                  <span className="text-sm font-medium text-[#313647]">
+                    3cm
+                  </span>
                   <span className="text-sm font-medium text-[#313647]">4m</span>
                 </div>
               </div>
@@ -687,38 +758,52 @@ export default function Dashboard() {
                       key={`bg-${trigger.id}`}
                       style={{ width: `${widthPercent}%` }}
                       className="bg-gradient-to-r from-[#A3B087]/20 to-[#A3B087]/10 border-r border-[#A3B087]/20 flex items-center justify-center text-xs font-medium text-[#313647]"
-                      title={`${trigger.minDistance}m - ${trigger.maxDistance}m: ${trigger.audioName || 'No audio assigned'}`}
+                      title={`${trigger.minDistance}m - ${trigger.maxDistance}m: ${trigger.audioName || "No audio assigned"}`}
                     >
                       {trigger.audioName && (
-                        <span className="truncate px-2">{trigger.audioName.length > 15 ? trigger.audioName.substring(0, 15) + "..." : trigger.audioName}</span>
+                        <span className="truncate px-2">
+                          {trigger.audioName.length > 15
+                            ? trigger.audioName.substring(0, 15) + "..."
+                            : trigger.audioName}
+                        </span>
                       )}
                     </div>
                   );
                 })}
               </div>
-              
+
               {/* Vertical line indicator */}
-              {playingTrigger && (() => {
-                const trigger = distanceTriggers.find((t) => t.id === playingTrigger);
-                if (!trigger) return null;
-                const rangeSize = trigger.maxDistance - trigger.minDistance;
-                const totalRange = 4 - 0.03;
-                const rangeStartPercent = ((trigger.minDistance - 0.03) / totalRange) * 100;
-                const rangeWidth = (rangeSize / totalRange) * 100;
-                const linePercent = rangeStartPercent + (rangeWidth * playbackProgress / 100);
-                return (
-                  <div
-                    className="absolute top-0 bottom-0 w-1 bg-[#435663] shadow-lg"
-                    style={{ left: `${linePercent}%`, transform: "translateX(-50%)" }}
-                  />
-                );
-              })()}
+              {playingTrigger &&
+                (() => {
+                  const trigger = distanceTriggers.find(
+                    (t) => t.id === playingTrigger,
+                  );
+                  if (!trigger) return null;
+                  const rangeSize = trigger.maxDistance - trigger.minDistance;
+                  const totalRange = 4 - 0.03;
+                  const rangeStartPercent =
+                    ((trigger.minDistance - 0.03) / totalRange) * 100;
+                  const rangeWidth = (rangeSize / totalRange) * 100;
+                  const linePercent =
+                    rangeStartPercent + (rangeWidth * playbackProgress) / 100;
+                  return (
+                    <div
+                      className="absolute top-0 bottom-0 w-1 bg-[#435663] shadow-lg"
+                      style={{
+                        left: `${linePercent}%`,
+                        transform: "translateX(-50%)",
+                      }}
+                    />
+                  );
+                })()}
             </div>
           </div>
 
           {/* Create Custom Range */}
           <div className="mb-8 bg-[#A3B087]/10 border border-dashed border-[#A3B087] rounded-lg p-6">
-            <h3 className="text-lg font-semibold text-[#313647] mb-4">Create Custom Range</h3>
+            <h3 className="text-lg font-semibold text-[#313647] mb-4">
+              Create Custom Range
+            </h3>
             <div className="grid grid-cols-2 gap-4 mb-4">
               <div className="space-y-2">
                 <label className="text-sm font-medium text-[#313647]">
@@ -766,12 +851,19 @@ export default function Dashboard() {
           {/* Distance Trigger Configuration */}
           <div className="space-y-4">
             {distanceTriggers.map((trigger) => (
-              <div key={trigger.id} className="bg-[#FFF8D4] p-4 rounded-lg border border-[#A3B087]/20 space-y-3">
+              <div
+                key={trigger.id}
+                className="bg-[#FFF8D4] p-4 rounded-lg border border-[#A3B087]/20 space-y-3"
+              >
                 <div className="flex justify-between items-center">
                   <h3 className="font-semibold text-[#313647]">
                     {trigger.minDistance}m - {trigger.maxDistance}m
-                    {!["zone1", "zone2", "zone3", "zone4"].includes(trigger.id) && (
-                      <span className="text-xs text-[#A3B087] ml-2">(Custom)</span>
+                    {!["zone1", "zone2", "zone3", "zone4"].includes(
+                      trigger.id,
+                    ) && (
+                      <span className="text-xs text-[#A3B087] ml-2">
+                        (Custom)
+                      </span>
                     )}
                   </h3>
                   <div className="flex items-center gap-2">
@@ -788,7 +880,7 @@ export default function Dashboard() {
                     </button>
                   </div>
                 </div>
-                
+
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-[#313647]">
                     Assign Audio:
@@ -797,9 +889,10 @@ export default function Dashboard() {
                     value={trigger.audioId || ""}
                     onChange={(e) => {
                       const audioId = e.target.value || null;
-                      const audio = [...PRESET_BUZZER_SOUNDS, ...uploadedAudios].find(
-                        (a) => a.id === audioId
-                      );
+                      const audio = [
+                        ...PRESET_BUZZER_SOUNDS,
+                        ...uploadedAudios,
+                      ].find((a) => a.id === audioId);
                       updateDistanceTrigger(trigger.id, audioId, audio?.name);
                     }}
                     className="w-full px-3 py-2 border border-[#A3B087]/30 rounded-lg text-[#313647] bg-white focus:outline-none focus:ring-2 focus:ring-[#435663]/50"
