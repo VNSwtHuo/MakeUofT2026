@@ -15,6 +15,7 @@ interface AudioFile {
   period?: number;
   voiceId?: string;
   voiceName?: string;
+  sourceType?: "uploaded" | "saved-tone" | "ai-voice" | "ai-sfx";
 }
 
 interface DistanceTrigger {
@@ -430,15 +431,13 @@ export default function Dashboard() {
       return;
     }
 
-    const selectedVoiceObj = ELEVENLABS_VOICES.find((v) => v.id === selectedVoice);
     const newCustomTone: AudioFile = {
       id: `custom-${Date.now()}`,
       name: `Custom ${freq}Hz, ${period.toFixed(1)}s`,
       frequency: freq,
       period: period,
       isPreset: false,
-      voiceId: selectedVoice,
-      voiceName: selectedVoiceObj?.name,
+      sourceType: "saved-tone",
     };
 
     setSavedCustomTones((prev) => [...prev, newCustomTone]);
@@ -485,6 +484,7 @@ export default function Dashboard() {
         isPreset: false,
         voiceId: selectedVoice,
         voiceName: selectedVoiceObj?.name,
+        sourceType: "ai-voice",
       };
 
       setUploadedAudios((prev) => [...prev, newAudio]);
@@ -536,6 +536,7 @@ export default function Dashboard() {
         name: `SFX: ${sfxCustomText}`,
         url: url,
         isPreset: false,
+        sourceType: "ai-sfx",
       };
 
       setUploadedAudios((prev) => [...prev, newAudio]);
@@ -567,6 +568,7 @@ export default function Dashboard() {
           name: file.name,
           url,
           isPreset: false,
+          sourceType: "uploaded",
         };
         setUploadedAudios((prev) => [...prev, newAudio]);
       };
@@ -642,7 +644,6 @@ export default function Dashboard() {
       <div className="flex justify-between items-center mb-8">
         <div className="text-center flex-1">
           <h1 className="text-[#313647] text-4xl font-bold">Audio Control Panel</h1>
-          <p className="text-[#A3B087] mt-2">Radar Navigation System</p>
         </div>
         <Button
           onClick={handleLogout}
@@ -724,94 +725,62 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Uploaded Audio Files */}
-        {uploadedAudios.length > 0 && (
+        {/* Custom Audio Files */}
+        {(uploadedAudios.length > 0 || savedCustomTones.length > 0) && (
           <div className="bg-white border border-[#A3B087]/30 rounded-xl p-8">
             <h2 className="text-2xl font-semibold text-[#313647] mb-6">
               Custom Audio Files
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {uploadedAudios.map((audio) => (
-                <div
-                  key={audio.id}
-                  className="flex items-center justify-between bg-[#FFF8D4] p-4 rounded-lg border border-[#A3B087]/20"
-                >
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-[#313647] truncate">{audio.name}</p>
-                    {audio.voiceName && (
-                      <p className="text-sm text-[#A3B087]">{audio.voiceName}</p>
-                    )}
-                  </div>
-                  <div className="flex gap-2 ml-4">
-                    <Button
-                      onClick={() => playSound(audio)}
-                      disabled={activeSound !== null && activeSound !== audio.id}
-                      size="sm"
-                      variant="outline"
-                      className="bg-[#435663] text-white hover:bg-[#435663]/90"
-                    >
-                      {activeSound === audio.id ? (
-                        <Pause className="size-4" />
-                      ) : (
-                        <Play className="size-4" />
-                      )}
-                    </Button>
-                    <Button
-                      onClick={() => deleteUploadedAudio(audio.id)}
-                      size="sm"
-                      variant="destructive"
-                    >
-                      Delete
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+              {[...uploadedAudios, ...savedCustomTones].map((audio) => {
+                const isSavedTone = audio.sourceType === "saved-tone"
+                  || (!audio.url && Boolean(audio.frequency) && Boolean(audio.period));
+                const sourceLabel = audio.sourceType === "ai-sfx"
+                  ? "AI SFX"
+                  : audio.sourceType === "ai-voice"
+                  ? "AI Voice"
+                  : isSavedTone
+                  ? "Saved Tone"
+                  : "Uploaded";
 
-        {/* Saved Custom Tones */}
-        {savedCustomTones.length > 0 && (
-          <div className="bg-white border border-[#A3B087]/30 rounded-xl p-8">
-            <h2 className="text-2xl font-semibold text-[#313647] mb-6">
-              Saved Custom Tones
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {savedCustomTones.map((audio) => (
-                <div
-                  key={audio.id}
-                  className="flex items-center justify-between bg-[#FFF8D4] p-4 rounded-lg border border-[#A3B087]/20"
-                >
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-[#313647] truncate">{audio.name}</p>
-                    {audio.voiceName && (
-                      <p className="text-sm text-[#A3B087]">{audio.voiceName}</p>
-                    )}
+                return (
+                  <div
+                    key={audio.id}
+                    className="flex items-center justify-between bg-[#FFF8D4] p-4 rounded-lg border border-[#A3B087]/20"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-[#313647] truncate">{audio.name}</p>
+                      <p className="text-xs text-[#A3B087]">{sourceLabel}</p>
+                    </div>
+                    <div className="flex gap-2 ml-4">
+                      <Button
+                        onClick={() => playSound(audio)}
+                        disabled={activeSound !== null && activeSound !== audio.id}
+                        size="sm"
+                        variant="outline"
+                        className="bg-[#435663] text-white hover:bg-[#435663]/90"
+                      >
+                        {activeSound === audio.id ? (
+                          <Pause className="size-4" />
+                        ) : (
+                          <Play className="size-4" />
+                        )}
+                      </Button>
+                      <Button
+                        onClick={() =>
+                          isSavedTone
+                            ? handleDeleteCustomTone(audio.id)
+                            : deleteUploadedAudio(audio.id)
+                        }
+                        size="sm"
+                        variant="destructive"
+                      >
+                        Delete
+                      </Button>
+                    </div>
                   </div>
-                  <div className="flex gap-2 ml-4">
-                    <Button
-                      onClick={() => playSound(audio)}
-                      disabled={activeSound !== null && activeSound !== audio.id}
-                      size="sm"
-                      variant="outline"
-                      className="bg-[#435663] text-white hover:bg-[#435663]/90"
-                    >
-                      {activeSound === audio.id ? (
-                        <Pause className="size-4" />
-                      ) : (
-                        <Play className="size-4" />
-                      )}
-                    </Button>
-                    <Button
-                      onClick={() => handleDeleteCustomTone(audio.id)}
-                      size="sm"
-                      variant="destructive"
-                    >
-                      Delete
-                    </Button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
@@ -1266,7 +1235,7 @@ export default function Dashboard() {
                     value={trigger.audioId || ""}
                     onChange={(e) => {
                       const audioId = e.target.value || null;
-                      const audio = [...PRESET_BUZZER_SOUNDS, ...uploadedAudios].find(
+                      const audio = [...PRESET_BUZZER_SOUNDS, ...uploadedAudios, ...savedCustomTones].find(
                         (a) => a.id === audioId
                       );
                       updateDistanceTrigger(trigger.id, audioId, audio?.name);
@@ -1284,6 +1253,15 @@ export default function Dashboard() {
                     {uploadedAudios.length > 0 && (
                       <optgroup label="Uploaded Files">
                         {uploadedAudios.map((audio) => (
+                          <option key={audio.id} value={audio.id}>
+                            {audio.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {savedCustomTones.length > 0 && (
+                      <optgroup label="Saved Custom Tones">
+                        {savedCustomTones.map((audio) => (
                           <option key={audio.id} value={audio.id}>
                             {audio.name}
                           </option>

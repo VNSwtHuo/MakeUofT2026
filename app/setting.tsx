@@ -66,7 +66,7 @@ export function SettingsPanel({
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl">Radar Configuration</h1>
+          <h1 className="text-3xl">Ultrasonic Configuration</h1>
           <p className="text-muted-foreground">
             User: {user.name} • ID: {user.id}
           </p>

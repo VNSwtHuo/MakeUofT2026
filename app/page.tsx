@@ -30,10 +30,10 @@ export default function LoginScreen() {
 
           <div className="space-y-2">
             <h1 className="text-[#313647] text-5xl font-bold tracking-tight">
-              Radar Navigation System
+              Beats Per Minute
             </h1>
             <p className="text-[#A3B087] text-xl font-bold">
-              Low-Visibility Navigation Assistant for Tactical Operations
+              Low-Visibility Ultrasonic Navigation Assistant
             </p>
           </div>
         </div>
