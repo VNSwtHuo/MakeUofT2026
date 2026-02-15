@@ -580,7 +580,10 @@ void playAudioBlocking(const String &audioId)
   while (file.available())
   {
     uint8_t sample = file.read();
-    dacWrite(dacPin, sample);
+    // Volume scaling (50%)
+    uint8_t scaledSample = 128 + ((int)sample - 128) * 0.3;
+
+    dacWrite(dacPin, scaledSample);
     delayMicroseconds(sampleDelayUs);
   }
 
