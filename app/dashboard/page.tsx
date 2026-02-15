@@ -1,10 +1,10 @@
 "use client";
 
-import { LogOut, Upload, Volume2, Play, Pause } from "lucide-react";
-import JSZip from "jszip";
+import { LogOut, Upload, Volume2, Play, Pause, Wifi, WifiOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
 import { useState, useRef, useEffect } from "react";
+import { esp32Service } from "../esp32-intergrate";
 
 interface AudioFile {
   id: string;
@@ -69,17 +69,9 @@ const ELEVENLABS_VOICES = [
   { id: "GhkQkxbimoIykF4iGYqh", name: "Kyle - Neutral" },
 ];
 
-let toneAudioContext: AudioContext | null = null;
-
 // Function to play a tone using Web Audio API
 const playTone = (frequency: number, duration: number) => {
-  if (!toneAudioContext) {
-    toneAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-  }
-  const audioContext = toneAudioContext;
-  if (audioContext.state === "suspended") {
-    audioContext.resume().catch(() => null);
-  }
+  const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
   const oscillator = audioContext.createOscillator();
   const gainNode = audioContext.createGain();
 
@@ -102,15 +94,28 @@ export default function Dashboard() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const repeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const presetRepeatIntervalsRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+  const presetRepeatIntervalsRef = useRef<Map<string, NodeJS.Timeout>>(
+    new Map(),
+  );
+
+  // Serial and RFID state
+  const [userId, setUserId] = useState<string>("");
+  const [serialConnected, setSerialConnected] = useState(false);
+  const [serialStatus, setSerialStatus] = useState<string>("Disconnected");
+
+  // Audio state
   const [uploadedAudios, setUploadedAudios] = useState<AudioFile[]>([]);
   const [savedCustomTones, setSavedCustomTones] = useState<AudioFile[]>([]);
   const [activeSound, setActiveSound] = useState<string | null>(null);
   const [customFrequency, setCustomFrequency] = useState<number | string>(500);
   const [customPeriod, setCustomPeriod] = useState<number | string>(0.5);
-  const [soundGenerationType, setSoundGenerationType] = useState<"tts" | "sfx">("tts");
+  const [soundGenerationType, setSoundGenerationType] = useState<"tts" | "sfx">(
+    "tts",
+  );
   const [ttsText, setTtsText] = useState<string>("");
-  const [selectedVoice, setSelectedVoice] = useState<string>("21m00Tcm4TlvDq8ikWAM");
+  const [selectedVoice, setSelectedVoice] = useState<string>(
+    "21m00Tcm4TlvDq8ikWAM",
+  );
   const [sfxStyle, setSfxStyle] = useState<string>("sound effect");
   const [sfxCustomText, setSfxCustomText] = useState<string>("");
   const [sfxCustomPeriod, setSfxCustomPeriod] = useState<number | string>(0.5);
@@ -123,31 +128,72 @@ export default function Dashboard() {
   ]);
   const [newRangeMin, setNewRangeMin] = useState<number | string>(0.1);
   const [newRangeMax, setNewRangeMax] = useState<number | string>(0.5);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [isPlayingSequence, setIsPlayingSequence] = useState(false);
   const [playingTrigger, setPlayingTrigger] = useState<string | null>(null);
-  const [playbackProgress, setPlaybackProgress] = useState(0); // 0-100
+  const [playbackProgress, setPlaybackProgress] = useState(0);
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+
   const sequenceIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const isPlayingSequenceRef = useRef(false);
   const playbackStartTimeRef = useRef<number>(0);
   const playbackDurationRef = useRef<number>(0);
   const sequenceStartTimeRef = useRef<number>(0);
   const totalSequenceDurationRef = useRef<number>(0);
 
+  // Initialize serial connection on mount (if port was previously selected)
+  useEffect(() => {
+    // No auto-connect: user must click Connect ESP32 (Web Serial requires gesture)
+    return () => {};
+  }, []);
+
+  // Handler to connect to ESP32 (must be called from user click)
+  const handleConnectESP32 = async () => {
+    setIsConnecting(true);
+    try {
+      const ok = await esp32Service.connect();
+      if (ok) {
+        esp32Service.onRFIDScan((uid: string) => {
+          setUserId(uid);
+          setSerialStatus(`Connected - User: ${uid}`);
+        });
+        esp32Service.onRadarData((angle: number, distance: number) => {
+          // optional: handle radar stream updates
+        });
+        setSerialConnected(true);
+        setSerialStatus("Connected - Ready to scan");
+      } else {
+        setSerialStatus("Failed to connect");
+      }
+    } catch (error) {
+      console.error("Connection error:", error);
+      setSerialStatus("Connection failed");
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
+  // Check if all ranges have audio assigned
+  const allRangesAssigned = distanceTriggers.every((trigger) => trigger.audioId !== null);
+
   // Update playback progress animation
   useEffect(() => {
     if (!isPlayingSequence) return;
-    
+
     const updateProgress = () => {
       if (sequenceStartTimeRef.current && totalSequenceDurationRef.current) {
         const elapsed = Date.now() - sequenceStartTimeRef.current;
-        const progress = Math.min((elapsed / totalSequenceDurationRef.current) * 100, 100);
+        const progress = Math.min(
+          (elapsed / totalSequenceDurationRef.current) * 100,
+          100,
+        );
         setPlaybackProgress(progress);
       }
       if (isPlayingSequence) {
         requestAnimationFrame(updateProgress);
       }
     };
-    
+
     const animationId = requestAnimationFrame(updateProgress);
     return () => cancelAnimationFrame(animationId);
   }, [isPlayingSequence]);
@@ -168,13 +214,50 @@ export default function Dashboard() {
     };
   }, []);
 
-  const updateDistanceTrigger = (triggerId: string, audioId: string | null, audioName?: string) => {
+  // Listen for RFID scans from esp32Service (Web Serial client)
+  useEffect(() => {
+    const onRfid = async (uid: string) => {
+      // UID comes in as hex bytes (e.g. "04 A3 2B ...") - use as-is
+      setCurrentUserId(uid);
+      try {
+        const resp = await fetch(`/api/settings?userId=${encodeURIComponent(uid)}`);
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data && Array.isArray(data.ranges)) {
+            const mapped = data.ranges.map((r: any, idx: number) => ({
+              id: r.id || `range-${idx}`,
+              minDistance: Number(r.minDistance) || 0,
+              maxDistance: Number(r.maxDistance) || 0,
+              audioId: r.audiofile || null,
+            }));
+            setDistanceTriggers(mapped);
+            alert(`Loaded settings for user ${uid}`);
+          }
+        } else {
+          // No settings found
+          setDistanceTriggers([]);
+          alert(`No saved settings for user ${uid}`);
+        }
+      } catch (err) {
+        console.error('Failed to load settings for UID', uid, err);
+      }
+    };
+
+    esp32Service.onRFIDScan((uid: string) => onRfid(uid));
+    return () => {
+      esp32Service.onRFIDScan(() => {});
+    };
+  }, []);
+
+  const updateDistanceTrigger = (
+    triggerId: string,
+    audioId: string | null,
+    audioName?: string,
+  ) => {
     setDistanceTriggers((prev) =>
       prev.map((trigger) =>
-        trigger.id === triggerId
-          ? { ...trigger, audioId, audioName }
-          : trigger
-      )
+        trigger.id === triggerId ? { ...trigger, audioId, audioName } : trigger,
+      ),
     );
   };
 
@@ -208,14 +291,15 @@ export default function Dashboard() {
     setActiveSound(null);
     setIsPlayingRepeat(false);
     setIsPlayingSequence(false);
-    isPlayingSequenceRef.current = false;
     setPlayingTrigger(null);
     setPlaybackProgress(0);
   };
 
   const addCustomRange = () => {
-    const minVal = typeof newRangeMin === 'string' ? parseFloat(newRangeMin) : newRangeMin;
-    const maxVal = typeof newRangeMax === 'string' ? parseFloat(newRangeMax) : newRangeMax;
+    const minVal =
+      typeof newRangeMin === "string" ? parseFloat(newRangeMin) : newRangeMin;
+    const maxVal =
+      typeof newRangeMax === "string" ? parseFloat(newRangeMax) : newRangeMax;
 
     if (isNaN(minVal) || isNaN(maxVal)) {
       alert("Please enter valid numbers");
@@ -242,7 +326,7 @@ export default function Dashboard() {
       (trigger) =>
         (minVal >= trigger.minDistance && minVal < trigger.maxDistance) ||
         (maxVal > trigger.minDistance && maxVal <= trigger.maxDistance) ||
-        (minVal <= trigger.minDistance && maxVal >= trigger.maxDistance)
+        (minVal <= trigger.minDistance && maxVal >= trigger.maxDistance),
     );
 
     if (overlaps) {
@@ -257,232 +341,119 @@ export default function Dashboard() {
       audioId: null,
     };
 
-    setDistanceTriggers((prev) => [...prev, newTrigger].sort((a, b) => a.minDistance - b.minDistance));
+    setDistanceTriggers((prev) =>
+      [...prev, newTrigger].sort((a, b) => a.minDistance - b.minDistance),
+    );
     setNewRangeMin(0.1);
     setNewRangeMax(0.5);
   };
 
-  const handleSaveAudioSignals = async () => {
-    const esc = (value: string) =>
-      value.replace(/\\/g, "\\\\").replace(/\"/g, "\\\"").replace(/\r?\n/g, " ");
-    const toIdentifier = (value: string, index: number) => {
-      const normalized = value.replace(/[^a-zA-Z0-9_]/g, "_");
-      const trimmed = normalized.replace(/^_+/, "");
-      const base = trimmed.length > 0 ? trimmed : `audio_${index}`;
-      return /^[a-zA-Z]/.test(base) ? base : `audio_${base}`;
-    };
-
-    const sampleRate = 8000;
-    const maxDurationSeconds = 5;
-    const amplitude = 127;
-
-    const decodeAudio = async (audioUrl: string) => {
-      const response = await fetch(audioUrl);
-      const arrayBuffer = await response.arrayBuffer();
-      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const decoded = await audioContext.decodeAudioData(arrayBuffer.slice(0));
-      return decoded;
-    };
-
-    const downmixToMono = (buffer: AudioBuffer) => {
-      if (buffer.numberOfChannels === 1) {
-        return buffer;
-      }
-      const monoBuffer = new AudioBuffer({
-        length: buffer.length,
-        numberOfChannels: 1,
-        sampleRate: buffer.sampleRate,
-      });
-      const monoData = monoBuffer.getChannelData(0);
-      for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
-        const channelData = buffer.getChannelData(channel);
-        for (let i = 0; i < channelData.length; i++) {
-          monoData[i] += channelData[i] / buffer.numberOfChannels;
-        }
-      }
-      return monoBuffer;
-    };
-
-    const resampleToTarget = async (buffer: AudioBuffer, targetSampleRate: number) => {
-      if (buffer.sampleRate === targetSampleRate) {
-        return buffer;
-      }
-      const offlineContext = new OfflineAudioContext(
-        1,
-        Math.ceil(buffer.duration * targetSampleRate),
-        targetSampleRate
-      );
-      const source = offlineContext.createBufferSource();
-      source.buffer = buffer;
-      source.connect(offlineContext.destination);
-      source.start(0);
-      return await offlineContext.startRendering();
-    };
-
-    const allAudios = [...PRESET_BUZZER_SOUNDS, ...uploadedAudios, ...savedCustomTones];
-    const triggeredIds = distanceTriggers
-      .map((trigger) => trigger.audioId)
-      .filter((id): id is string => Boolean(id));
-    const triggeredAudios = triggeredIds
-      .map((id) => allAudios.find((audio) => audio.id === id))
-      .filter((audio): audio is AudioFile => Boolean(audio));
-
-    const uniqueAudios = Array.from(new Map(triggeredAudios.map((audio) => [audio.id, audio])).values());
-    const audioMeta = await Promise.all(uniqueAudios.map(async (audio, index) => {
-      const fallbackSource = audio.frequency && audio.period ? "saved-tone" : "uploaded";
-      const sourceType = audio.sourceType || fallbackSource;
-      const frequency = typeof audio.frequency === "number" ? audio.frequency : 0;
-      const period = typeof audio.period === "number" ? audio.period : 0;
-      const identifier = toIdentifier(audio.id, index);
-
-      let samples: number[] = [];
-      if (frequency > 0 && period > 0) {
-        const duration = Math.max(0.05, period);
-        const sampleCount = Math.max(1, Math.round(sampleRate * duration));
-        samples = Array.from({ length: sampleCount }, (_, i) => {
-          const t = i / sampleRate;
-          const value = Math.sin(2 * Math.PI * frequency * t);
-          const sample = Math.round(128 + value * amplitude);
-          return Math.max(0, Math.min(255, sample));
-        });
-      } else if (audio.url) {
-        try {
-          const decoded = await decodeAudio(audio.url);
-          const mono = downmixToMono(decoded);
-          const resampled = await resampleToTarget(mono, sampleRate);
-          const channel = resampled.getChannelData(0);
-          const maxSamples = Math.min(channel.length, Math.round(sampleRate * maxDurationSeconds));
-          samples = Array.from({ length: maxSamples }, (_, i) => {
-            const value = channel[i];
-            const sample = Math.round((value + 1) * 127.5);
-            return Math.max(0, Math.min(255, sample));
-          });
-        } catch (error) {
-          console.error("Audio decode failed:", error);
-          samples = [128];
-        }
-      } else {
-        samples = [128];
-      }
-
-      const hexLines: string[] = [];
-      for (let i = 0; i < samples.length; i += 12) {
-        const slice = samples.slice(i, i + 12).map((value) =>
-          `0x${value.toString(16).padStart(2, "0")}`
-        );
-        hexLines.push(`  ${slice.join(", ")}`);
-      }
-
-      return {
-        audio,
-        identifier,
-        sourceType,
-        frequency,
-        period,
-        sampleCount: samples.length,
-        hexLines,
-        isPlaceholder: samples.length <= 1,
-      };
-    }));
-
-    const triggerEntries = distanceTriggers.map((trigger) => (
-      `  {${trigger.minDistance}, ${trigger.maxDistance}, "${esc(trigger.audioId || "")}"}`
-    ));
-
-    const audioEntries = audioMeta.map((entry) => (
-      `  {"${esc(entry.audio.id)}", "${esc(entry.audio.name)}", ${entry.frequency}, ${entry.period}, "${esc(entry.sourceType)}", AUDIO_DATA_${entry.identifier}, ${entry.sampleCount}, ${sampleRate}}`
-    ));
-
-    const audioIncludes = audioMeta.map((entry) => (
-      `#include "audio/audio_data_${entry.identifier}.h"`
-    ));
-
-    const audioDataFiles = audioMeta.map((entry) => {
-      const guard = `AUDIO_DATA_${entry.identifier.toUpperCase()}_H`;
-      const comment = entry.isPlaceholder
-        ? `// Placeholder: ${esc(entry.audio.name)} had no decodable audio`
-        : `// ${esc(entry.audio.name)}`;
-      const content = [
-        `#ifndef ${guard}`,
-        `#define ${guard}`,
-        "",
-        "#include <stdint.h>",
-        "",
-        comment,
-        `#define AUDIO_DATA_${entry.identifier}_LEN ${entry.sampleCount}`,
-        `#define AUDIO_DATA_${entry.identifier}_RATE ${sampleRate}`,
-        `static const uint8_t AUDIO_DATA_${entry.identifier}[AUDIO_DATA_${entry.identifier}_LEN] = {`,
-        entry.hexLines.join(",\n"),
-        "};",
-        "",
-        `#endif // ${guard}`,
-        "",
-      ].join("\n");
-
-      return {
-        fileName: `audio/audio_data_${entry.identifier}.h`,
-        content,
-      };
-    });
-
-    const header = [
-      "#ifndef AUDIO_SIGNALS_CONFIG_H",
-      "#define AUDIO_SIGNALS_CONFIG_H",
-      "",
-      "#include <stdint.h>",
-      ...audioIncludes,
-      "",
-      "typedef struct {",
-      "  const char* id;",
-      "  const char* name;",
-      "  float frequency_hz;",
-      "  float period_s;",
-      "  const char* source;",
-      "  const uint8_t* data;",
-      "  uint32_t length;",
-      "  uint32_t sample_rate;",
-      "} AudioSignal;",
-      "",
-      "typedef struct {",
-      "  float min_m;",
-      "  float max_m;",
-      "  const char* audio_id;",
-      "} DistanceTrigger;",
-      "",
-      `#define AUDIO_SIGNAL_COUNT ${audioEntries.length}`,
-      `#define DISTANCE_TRIGGER_COUNT ${triggerEntries.length}`,
-      "",
-      "static const AudioSignal AUDIO_SIGNALS[AUDIO_SIGNAL_COUNT] = {",
-      audioEntries.join(",\n"),
-      "};",
-      "",
-      "static const DistanceTrigger DISTANCE_TRIGGERS[DISTANCE_TRIGGER_COUNT] = {",
-      triggerEntries.join(",\n"),
-      "};",
-      "",
-      "#endif // AUDIO_SIGNALS_CONFIG_H",
-      "",
-    ].join("\n");
-
-    const zip = new JSZip();
-    zip.file("audio_signals_config.h", header);
-    audioDataFiles.forEach((file) => {
-      zip.file(file.fileName, file.content);
-    });
-
-    const blob = await zip.generateAsync({ type: "blob" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "audio_signals_export.zip";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+  const deleteCustomRange = (triggerId: string) => {
+    setDistanceTriggers((prev) =>
+      prev.filter((trigger) => trigger.id !== triggerId),
+    );
   };
 
-  const deleteCustomRange = (triggerId: string) => {
-    setDistanceTriggers((prev) => prev.filter((trigger) => trigger.id !== triggerId));
+  // Handle Save and Load
+  const handleSaveAndLoad = async () => {
+    if (!serialConnected) {
+      alert("ESP32 not connected. Please connect your device via serial port.");
+      return;
+    }
+
+    if (!userId) {
+      alert("No user ID detected. Please scan a card with the ESP32.");
+      return;
+    }
+
+    if (!allRangesAssigned) {
+      alert("Please assign a sound track to all distance ranges.");
+      return;
+    }
+
+    setIsSavingSettings(true);
+
+    try {
+      // Prepare settings data
+      const settingsData = {
+        userId,
+        ranges: distanceTriggers.map((trigger) => ({
+          id: trigger.id,
+          minDistance: trigger.minDistance,
+          maxDistance: trigger.maxDistance,
+          soundId: trigger.audioId || "default",
+        })),
+      };
+
+      // Send to ESP32 via Web Serial through esp32Service
+      try {
+        await esp32Service.sendUserSettings({
+          userId: settingsData.userId,
+          ranges: settingsData.ranges.map((r: any) => ({
+            minDistance: r.minDistance,
+            maxDistance: r.maxDistance,
+            audioId: r.soundId,
+            audioName: r.soundId,
+          })),
+          audioFiles: [],
+        });
+      } catch (err) {
+        throw new Error("Failed to send settings to ESP32");
+      }
+
+      // Also save to MongoDB for persistence
+      const response = await fetch("/api/settings", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(settingsData),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to save settings to server");
+      }
+
+      alert("Settings saved and loaded to ESP32!");
+    } catch (error) {
+      console.error("Save settings error:", error);
+      alert(`Failed to save settings: ${(error as Error).message}`);
+    } finally {
+      setIsSavingSettings(false);
+    }
+  };
+
+  // Load user settings from database
+  const handleLoadSavedSettings = async () => {
+    if (!userId) {
+      alert("No user ID detected. Please scan a card first.");
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/settings?userId=${userId}`);
+      if (!response.ok) {
+        alert("No saved settings found for this user.");
+        return;
+      }
+
+      const data = await response.json();
+      if (data.ranges && data.ranges.length > 0) {
+        setDistanceTriggers(
+          data.ranges.map((range: any) => ({
+            id: range.id,
+            minDistance: range.minDistance,
+            maxDistance: range.maxDistance,
+            audioId: range.audiofile,
+            audioName: range.audiofile,
+          }))
+        );
+        alert("Settings loaded from saved configuration.");
+      }
+    } catch (error) {
+      console.error("Load settings error:", error);
+      alert("Failed to load settings.");
+    }
   };
 
   const playDistanceSequence = () => {
@@ -501,7 +472,6 @@ export default function Dashboard() {
         audioRef.current.pause();
         audioRef.current.loop = false;
       }
-      isPlayingSequenceRef.current = false;
       setIsPlayingSequence(false);
       setPlayingTrigger(null);
       setPlaybackProgress(0);
@@ -510,7 +480,7 @@ export default function Dashboard() {
     }
 
     stopAllAudio();
-    
+
     // Calculate total sequence duration (through ALL distance triggers, not just those with audio)
     let totalDuration = 0;
     distanceTriggers.forEach((trigger) => {
@@ -518,10 +488,9 @@ export default function Dashboard() {
       const durationSeconds = rangeSize * 2; // 2 seconds per meter
       totalDuration += (durationSeconds + 0.5) * 1000; // Add gap between triggers
     });
-    
+
     sequenceStartTimeRef.current = Date.now();
     totalSequenceDurationRef.current = totalDuration;
-    isPlayingSequenceRef.current = true;
     setIsPlayingSequence(true);
     let currentIndex = 0;
 
@@ -540,7 +509,6 @@ export default function Dashboard() {
           audioRef.current.loop = false;
           audioRef.current.currentTime = 0;
         }
-        isPlayingSequenceRef.current = false;
         setIsPlayingSequence(false);
         setPlayingTrigger(null);
         setActiveSound(null);
@@ -565,7 +533,11 @@ export default function Dashboard() {
       playbackStartTimeRef.current = Date.now();
       playbackDurationRef.current = durationSeconds * 1000;
 
-      const allAudios = [...PRESET_BUZZER_SOUNDS, ...uploadedAudios, ...savedCustomTones];
+      const allAudios = [
+        ...PRESET_BUZZER_SOUNDS,
+        ...uploadedAudios,
+        ...savedCustomTones,
+      ];
       const audio = trigger.audioId
         ? allAudios.find((item) => item.id === trigger.audioId) || null
         : null;
@@ -576,13 +548,19 @@ export default function Dashboard() {
           playTone(audio.frequency, 0.1);
           const playInterval = setInterval(() => {
             const elapsed = Date.now() - playbackStartTimeRef.current;
-            if (!isPlayingSequenceRef.current || elapsed >= playbackDurationRef.current) {
+            if (
+              !isPlayingSequence ||
+              elapsed >= playbackDurationRef.current
+            ) {
               clearInterval(playInterval);
               return;
             }
             playTone(audio.frequency!, 0.1);
           }, audio.period * 1000);
-          presetRepeatIntervalsRef.current.set(`interval-${trigger.id}`, playInterval);
+          presetRepeatIntervalsRef.current.set(
+            `interval-${trigger.id}`,
+            playInterval,
+          );
         } else if (audio.url) {
           if (audioRef.current) {
             audioRef.current.src = audio.url;
@@ -596,7 +574,10 @@ export default function Dashboard() {
       }
 
       currentIndex++;
-      sequenceIntervalRef.current = setTimeout(playNextTrigger, (durationSeconds + 0.5) * 1000);
+      sequenceIntervalRef.current = setTimeout(
+        playNextTrigger,
+        (durationSeconds + 0.5) * 1000,
+      );
     };
 
     playNextTrigger();
@@ -604,18 +585,25 @@ export default function Dashboard() {
 
   const getAudioForDistance = (distanceMeters: number): AudioFile | null => {
     const trigger = distanceTriggers.find(
-      (t) => distanceMeters >= t.minDistance && distanceMeters <= t.maxDistance
+      (t) => distanceMeters >= t.minDistance && distanceMeters <= t.maxDistance,
     );
-    
+
     if (!trigger || !trigger.audioId) return null;
-    
-    const allAudios = [...PRESET_BUZZER_SOUNDS, ...uploadedAudios, ...savedCustomTones];
+
+    const allAudios = [
+      ...PRESET_BUZZER_SOUNDS,
+      ...uploadedAudios,
+      ...savedCustomTones,
+    ];
     return allAudios.find((audio) => audio.id === trigger.audioId) || null;
   };
 
   const handlePlayCustomTone = () => {
-    const freq = typeof customFrequency === 'string' ? parseInt(customFrequency) : customFrequency;
-    
+    const freq =
+      typeof customFrequency === "string"
+        ? parseInt(customFrequency)
+        : customFrequency;
+
     if (!isNaN(freq)) {
       stopAllAudio();
       playTone(freq, 0.1); // 100ms tone burst
@@ -634,31 +622,43 @@ export default function Dashboard() {
       setActiveSound(null);
     } else {
       // Start repeating tone
-      const freq = typeof customFrequency === 'string' ? parseInt(customFrequency) : customFrequency;
-      const period = typeof customPeriod === 'string' ? parseFloat(customPeriod) : customPeriod;
-      
+      const freq =
+        typeof customFrequency === "string"
+          ? parseInt(customFrequency)
+          : customFrequency;
+      const period =
+        typeof customPeriod === "string"
+          ? parseFloat(customPeriod)
+          : customPeriod;
+
       if (!isNaN(freq) && !isNaN(period)) {
         stopAllAudio();
         setIsPlayingRepeat(true);
         setActiveSound("custom");
-        
+
         // Play immediately
         playTone(freq, 0.1);
-        
+
         // Then set up repeating interval
         const intervalId = setInterval(() => {
           playTone(freq, 0.1);
         }, period * 1000);
-        
+
         repeatIntervalRef.current = intervalId;
       }
     }
   };
 
   const handleSaveCustomTone = () => {
-    const freq = typeof customFrequency === 'string' ? parseInt(customFrequency) : customFrequency;
-    const period = typeof customPeriod === 'string' ? parseFloat(customPeriod) : customPeriod;
-    
+    const freq =
+      typeof customFrequency === "string"
+        ? parseInt(customFrequency)
+        : customFrequency;
+    const period =
+      typeof customPeriod === "string"
+        ? parseFloat(customPeriod)
+        : customPeriod;
+
     if (isNaN(freq) || isNaN(period)) {
       alert("Please enter valid frequency and period values");
       return;
@@ -703,13 +703,17 @@ export default function Dashboard() {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `Failed to generate speech (${response.status})`);
+        throw new Error(
+          errorData.error || `Failed to generate speech (${response.status})`,
+        );
       }
 
       const audioBlob = await response.blob();
       const audioUrl = URL.createObjectURL(audioBlob);
 
-      const selectedVoiceObj = ELEVENLABS_VOICES.find((v) => v.id === selectedVoice);
+      const selectedVoiceObj = ELEVENLABS_VOICES.find(
+        (v) => v.id === selectedVoice,
+      );
       const newAudio: AudioFile = {
         id: `tts-${Date.now()}-${Math.random()}`,
         name: `Voice: "${text.substring(0, 30)}${text.length > 30 ? "..." : ""}"`,
@@ -731,7 +735,6 @@ export default function Dashboard() {
     }
   };
 
-
   const generateSFX = async () => {
     if (!sfxCustomText.trim()) {
       alert("Please enter text for the sound effect");
@@ -741,8 +744,13 @@ export default function Dashboard() {
     setIsGenerating(true);
 
     try {
-      const periodValue = typeof sfxCustomPeriod === 'string' ? parseFloat(sfxCustomPeriod) : sfxCustomPeriod;
-      const durationMs = Math.round(Math.max(0.1, Math.min(5, periodValue)) * 1000);
+      const periodValue =
+        typeof sfxCustomPeriod === "string"
+          ? parseFloat(sfxCustomPeriod)
+          : sfxCustomPeriod;
+      const durationMs = Math.round(
+        Math.max(0.1, Math.min(5, periodValue)) * 1000,
+      );
 
       const response = await fetch("/api/elevenlabs/music", {
         method: "POST",
@@ -777,7 +785,8 @@ export default function Dashboard() {
       alert("Sound effect generated and added to Custom Audio Files!");
     } catch (error) {
       console.error("SFX generation error:", error);
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
       alert(`Failed to generate sound effect: ${errorMessage}`);
     } finally {
       setIsGenerating(false);
@@ -817,7 +826,11 @@ export default function Dashboard() {
   const playSound = (audio: AudioFile) => {
     // If this sound is already playing, stop it
     if (activeSound === audio.id) {
-      if (audio.frequency && audio.period && presetRepeatIntervalsRef.current.has(audio.id)) {
+      if (
+        audio.frequency &&
+        audio.period &&
+        presetRepeatIntervalsRef.current.has(audio.id)
+      ) {
         const intervalId = presetRepeatIntervalsRef.current.get(audio.id);
         if (intervalId) {
           clearInterval(intervalId);
@@ -834,18 +847,18 @@ export default function Dashboard() {
 
     // Stop all other audio before playing new sound
     stopAllAudio();
-    
+
     setActiveSound(audio.id);
-    
+
     if (audio.frequency && audio.period) {
       // Play tone with repetition (works for both presets and saved custom tones)
       playTone(audio.frequency, 0.1); // 100ms tone burst
-      
+
       // Set up repeating interval
       const intervalId = setInterval(() => {
         playTone(audio.frequency!, 0.1);
       }, audio.period * 1000);
-      
+
       presetRepeatIntervalsRef.current.set(audio.id, intervalId);
     } else if (audio.url) {
       // Play uploaded file
@@ -867,30 +880,57 @@ export default function Dashboard() {
     setUploadedAudios((prev) => prev.filter((audio) => audio.id !== id));
   };
 
-  const allAudios = [...PRESET_BUZZER_SOUNDS, ...uploadedAudios, ...savedCustomTones];
+  const allAudios = [
+    ...PRESET_BUZZER_SOUNDS,
+    ...uploadedAudios,
+    ...savedCustomTones,
+  ];
 
   return (
     <div className="min-h-screen flex flex-col px-4 py-8 bg-[#FFF8D4]">
       <audio ref={audioRef} onEnded={() => setActiveSound(null)} />
 
-      {/* Header */}
-      <div className="flex justify-between items-center mb-8">
-        <div className="text-center flex-1">
+      {/* HEADER WITH SERIAL STATUS */}
+      <div className="flex justify-between items-center mb-8 gap-4">
+        <div className="flex-1">
+          <div className="flex items-center gap-3 mb-2">
+            {serialConnected ? (
+              <Wifi className="size-5 text-green-600" />
+            ) : (
+              <WifiOff className="size-5 text-red-600" />
+            )}
+            <span className={`text-sm font-semibold ${serialConnected ? "text-green-600" : "text-red-600"}`}>
+              {serialStatus}
+            </span>
+          </div>
           <h1 className="text-[#313647] text-4xl font-bold">Audio Control Panel</h1>
+          {userId && <p className="text-[#A3B087] text-sm mt-2">User ID: {userId}</p>}
         </div>
-        <Button
-          onClick={handleLogout}
-          size="lg"
-          variant="outline"
-          className="bg-[#435663] text-white hover:bg-[#435663]/90 hover:text-white"
-        >
-          <LogOut className="mr-2 size-4" />
-          Logout
-        </Button>
+        <div className="flex gap-3 flex-wrap">
+          {!serialConnected && (
+            <Button
+              onClick={handleConnectESP32}
+              disabled={isConnecting}
+              size="lg"
+              className="bg-[#435663] text-white hover:bg-[#435663]/90 whitespace-nowrap"
+            >
+              {isConnecting ? "Connecting..." : "Connect ESP32"}
+            </Button>
+          )}
+          <Button
+            onClick={handleLogout}
+            size="lg"
+            variant="outline"
+            className="bg-[#435663] text-white hover:bg-[#435663]/90 hover:text-white whitespace-nowrap"
+          >
+            <LogOut className="mr-2 size-4" />
+            Logout
+          </Button>
+        </div>
       </div>
 
       <div className="max-w-6xl mx-auto w-full space-y-8">
-        {/* Upload and Preset Sounds - Side by Side */}
+        {/* UPLOAD AND PRESET SOUNDS */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Upload Section */}
           <div className="bg-[#A3B087]/15 border-2 border-dashed border-[#A3B087] rounded-xl p-8 flex items-center justify-center">
@@ -936,8 +976,8 @@ export default function Dashboard() {
                   onClick={() => playSound(audio)}
                   className={`h-24 flex flex-col items-center justify-center transition-colors overflow-hidden ${
                     activeSound === audio.id
-                      ? 'bg-[#435663] text-white border-[#435663]'
-                      : 'bg-[#A3B087]/10 hover:bg-[#A3B087]/20 text-[#313647] border border-[#A3B087]/30'
+                      ? "bg-[#435663] text-white border-[#435663]"
+                      : "bg-[#A3B087]/10 hover:bg-[#A3B087]/20 text-[#313647] border border-[#A3B087]/30"
                   } rounded-lg`}
                 >
                   {activeSound === audio.id ? (
@@ -945,12 +985,16 @@ export default function Dashboard() {
                   ) : (
                     <Play className="size-5 mb-1" />
                   )}
-                  <span className="text-xs font-medium text-center leading-tight line-clamp-2">{audio.name}</span>
+                  <span className="text-xs font-medium text-center leading-tight line-clamp-2">
+                    {audio.name}
+                  </span>
                   <span className="text-xs mt-1 opacity-75">
                     {audio.period && `${audio.period}s`}
                   </span>
                   {activeSound === audio.id && (
-                    <span className="text-xs mt-1 font-semibold">● Playing</span>
+                    <span className="text-xs mt-1 font-semibold">
+                      ● Playing
+                    </span>
                   )}
                 </Button>
               ))}
@@ -966,15 +1010,19 @@ export default function Dashboard() {
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {[...uploadedAudios, ...savedCustomTones].map((audio) => {
-                const isSavedTone = audio.sourceType === "saved-tone"
-                  || (!audio.url && Boolean(audio.frequency) && Boolean(audio.period));
-                const sourceLabel = audio.sourceType === "ai-sfx"
-                  ? "AI SFX"
-                  : audio.sourceType === "ai-voice"
-                  ? "AI Voice"
-                  : isSavedTone
-                  ? "Saved Tone"
-                  : "Uploaded";
+                const isSavedTone =
+                  audio.sourceType === "saved-tone" ||
+                  (!audio.url &&
+                    Boolean(audio.frequency) &&
+                    Boolean(audio.period));
+                const sourceLabel =
+                  audio.sourceType === "ai-sfx"
+                    ? "AI SFX"
+                    : audio.sourceType === "ai-voice"
+                      ? "AI Voice"
+                      : isSavedTone
+                        ? "Saved Tone"
+                        : "Uploaded";
 
                 return (
                   <div
@@ -982,13 +1030,17 @@ export default function Dashboard() {
                     className="flex items-center justify-between bg-[#FFF8D4] p-4 rounded-lg border border-[#A3B087]/20"
                   >
                     <div className="flex-1 min-w-0">
-                      <p className="font-medium text-[#313647] truncate">{audio.name}</p>
+                      <p className="font-medium text-[#313647] truncate">
+                        {audio.name}
+                      </p>
                       <p className="text-xs text-[#A3B087]">{sourceLabel}</p>
                     </div>
                     <div className="flex gap-2 ml-4">
                       <Button
                         onClick={() => playSound(audio)}
-                        disabled={activeSound !== null && activeSound !== audio.id}
+                        disabled={
+                          activeSound !== null && activeSound !== audio.id
+                        }
                         size="sm"
                         variant="outline"
                         className="bg-[#435663] text-white hover:bg-[#435663]/90"
@@ -1029,7 +1081,8 @@ export default function Dashboard() {
             <div className="space-y-3">
               <div className="flex justify-between items-center gap-4">
                 <label className="text-lg font-medium text-[#313647]">
-                  Frequency: <span className="text-[#A3B087]">{customFrequency} Hz</span>
+                  Frequency:{" "}
+                  <span className="text-[#A3B087]">{customFrequency} Hz</span>
                 </label>
                 <input
                   type="number"
@@ -1054,7 +1107,11 @@ export default function Dashboard() {
                 type="range"
                 min="20"
                 max="2000"
-                value={typeof customFrequency === 'string' ? parseInt(customFrequency) || 500 : customFrequency}
+                value={
+                  typeof customFrequency === "string"
+                    ? parseInt(customFrequency) || 500
+                    : customFrequency
+                }
                 onChange={(e) => setCustomFrequency(parseInt(e.target.value))}
                 className="w-full h-2 bg-[#A3B087]/30 rounded-lg appearance-none cursor-pointer accent-[#435663]"
               />
@@ -1068,7 +1125,13 @@ export default function Dashboard() {
             <div className="space-y-3">
               <div className="flex justify-between items-center gap-4">
                 <label className="text-lg font-medium text-[#313647]">
-                  Repeat Period: <span className="text-[#A3B087]">{typeof customPeriod === 'string' ? customPeriod : customPeriod.toFixed(2)} seconds</span>
+                  Repeat Period:{" "}
+                  <span className="text-[#A3B087]">
+                    {typeof customPeriod === "string"
+                      ? customPeriod
+                      : customPeriod.toFixed(2)}{" "}
+                    seconds
+                  </span>
                 </label>
                 <input
                   type="number"
@@ -1095,7 +1158,11 @@ export default function Dashboard() {
                 min="0.1"
                 max="5"
                 step="0.1"
-                value={typeof customPeriod === 'string' ? parseFloat(customPeriod) || 0.5 : customPeriod}
+                value={
+                  typeof customPeriod === "string"
+                    ? parseFloat(customPeriod) || 0.5
+                    : customPeriod
+                }
                 onChange={(e) => setCustomPeriod(parseFloat(e.target.value))}
                 className="w-full h-2 bg-[#A3B087]/30 rounded-lg appearance-none cursor-pointer accent-[#435663]"
               />
@@ -1119,14 +1186,14 @@ export default function Dashboard() {
                 <Button
                   onClick={handlePlayRepeatingTone}
                   size="lg"
-                  className={`flex-1 ${isPlayingRepeat ? 'bg-red-600 hover:bg-red-700' : 'bg-[#435663] hover:bg-[#435663]/90'} text-white`}
+                  className={`flex-1 ${isPlayingRepeat ? "bg-red-600 hover:bg-red-700" : "bg-[#435663] hover:bg-[#435663]/90"} text-white`}
                 >
                   {isPlayingRepeat ? (
                     <Pause className="mr-2 size-5" />
                   ) : (
                     <Play className="mr-2 size-5" />
                   )}
-                  {isPlayingRepeat ? 'Stop Repeat' : 'Play Repeat'}
+                  {isPlayingRepeat ? "Stop Repeat" : "Play Repeat"}
                 </Button>
               </div>
               <Button
@@ -1174,6 +1241,22 @@ export default function Dashboard() {
             {soundGenerationType === "tts" && (
               <>
                 {/* Voice Selection */}
+              <Button
+                onClick={async () => {
+                  try {
+                    const ok = await esp32Service.connect();
+                    if (ok) alert('ESP32 connected (browser serial)');
+                    else alert('ESP32 connection failed or canceled');
+                  } catch (err) {
+                    console.error(err);
+                    alert('ESP32 connection error');
+                  }
+                }}
+                size="lg"
+                className="ml-3 bg-[#2b7a78] text-white"
+              >
+                Connect ESP32
+              </Button>
                 <div className="space-y-3">
                   <label className="text-lg font-medium text-[#313647]">
                     Select Voice
@@ -1218,7 +1301,6 @@ export default function Dashboard() {
                 </Button>
               </>
             )}
-
 
             {/* Sound Effects Section */}
             {soundGenerationType === "sfx" && (
@@ -1267,7 +1349,8 @@ export default function Dashboard() {
                       />
                     </div>
                     <p className="text-sm text-[#A3B087]">
-                      💡 Creates a sound effect based on your text input (0.1s - 5s duration)
+                      💡 Creates a sound effect based on your text input (0.1s -
+                      5s duration)
                     </p>
                   </div>
                 </div>
@@ -1284,7 +1367,6 @@ export default function Dashboard() {
             )}
 
             {/* Music Section */}
-
           </div>
         </div>
         {/* Distance Range Audio Assignment */}
@@ -1294,9 +1376,10 @@ export default function Dashboard() {
             Distance-Based Audio Triggers
           </h2>
           <p className="text-[#A3B087] mb-6">
-            Assign audio files to play when objects are detected within distance ranges (0m - 4m)
+            Assign audio files to play when objects are detected within distance
+            ranges (0m - 4m)
           </p>
-          
+
           {/* Visual Range Display */}
           <div className="mb-8 p-4 bg-[#FFF8D4] rounded-lg border border-[#A3B087]/20">
             <div className="flex items-center justify-between mb-4 px-2">
@@ -1308,65 +1391,84 @@ export default function Dashboard() {
               <div className="absolute inset-0">
                 {distanceTriggers.map((trigger) => {
                   const totalRange = 4 - 0;
-                  const startPercent = ((trigger.minDistance - 0) / totalRange) * 100;
-                  const widthPercent = ((trigger.maxDistance - trigger.minDistance) / totalRange) * 100;
+                  const startPercent =
+                    ((trigger.minDistance - 0) / totalRange) * 100;
+                  const widthPercent =
+                    ((trigger.maxDistance - trigger.minDistance) / totalRange) *
+                    100;
                   return (
                     <div
                       key={`bg-${trigger.id}`}
-                      style={{ 
+                      style={{
                         left: `${startPercent}%`,
-                        width: `${widthPercent}%`
+                        width: `${widthPercent}%`,
                       }}
                       className="absolute top-0 bottom-0 bg-gradient-to-r from-gray-800 to-gray-300 border-r border-gray-600 flex items-center justify-center text-xs font-medium text-white"
-                      title={`${trigger.minDistance}m - ${trigger.maxDistance}m: ${trigger.audioName || 'No audio assigned'}`}
+                      title={`${trigger.minDistance}m - ${trigger.maxDistance}m: ${trigger.audioName || "No audio assigned"}`}
                     >
                       {trigger.audioName && (
-                        <span className="truncate whitespace-nowrap px-1">{trigger.audioName}</span>
+                        <span className="truncate whitespace-nowrap px-1">
+                          {trigger.audioName}
+                        </span>
                       )}
                     </div>
                   );
                 })}
               </div>
-              
+
               {/* Vertical line indicator */}
-              {isPlayingSequence && (() => {
-                // Calculate current position based on elapsed time
-                if (!sequenceStartTimeRef.current || !totalSequenceDurationRef.current) return null;
-                
-                const elapsed = Date.now() - sequenceStartTimeRef.current;
-                let cumulativeTime = 0;
-                let currentPosition = 0; // Start position
-                
-                for (let i = 0; i < distanceTriggers.length; i++) {
-                  const trigger = distanceTriggers[i];
-                  const rangeSize = trigger.maxDistance - trigger.minDistance;
-                  const durationSeconds = rangeSize * 2;
-                  const triggerDuration = (durationSeconds + 0.5) * 1000; // milliseconds
-                  
-                  if (elapsed < cumulativeTime + triggerDuration) {
-                    // We're in this trigger
-                    const timeIntoTrigger = elapsed - cumulativeTime;
-                    const audioPlayDuration = durationSeconds * 1000;
-                    const proportionThroughTrigger = Math.min(timeIntoTrigger / audioPlayDuration, 1);
-                    currentPosition = trigger.minDistance + (proportionThroughTrigger * rangeSize);
-                    break;
+              {isPlayingSequence &&
+                (() => {
+                  // Calculate current position based on elapsed time
+                  if (
+                    !sequenceStartTimeRef.current ||
+                    !totalSequenceDurationRef.current
+                  )
+                    return null;
+
+                  const elapsed = Date.now() - sequenceStartTimeRef.current;
+                  let cumulativeTime = 0;
+                  let currentPosition = 0; // Start position
+
+                  for (let i = 0; i < distanceTriggers.length; i++) {
+                    const trigger = distanceTriggers[i];
+                    const rangeSize = trigger.maxDistance - trigger.minDistance;
+                    const durationSeconds = rangeSize * 2;
+                    const triggerDuration = (durationSeconds + 0.5) * 1000; // milliseconds
+
+                    if (elapsed < cumulativeTime + triggerDuration) {
+                      // We're in this trigger
+                      const timeIntoTrigger = elapsed - cumulativeTime;
+                      const audioPlayDuration = durationSeconds * 1000;
+                      const proportionThroughTrigger = Math.min(
+                        timeIntoTrigger / audioPlayDuration,
+                        1,
+                      );
+                      currentPosition =
+                        trigger.minDistance +
+                        proportionThroughTrigger * rangeSize;
+                      break;
+                    }
+
+                    cumulativeTime += triggerDuration;
                   }
-                  
-                  cumulativeTime += triggerDuration;
-                }
-                
-                const totalRange = 4 - 0;
-                const linePercent = ((currentPosition - 0) / totalRange) * 100;
-                
-                return (
-                  <div
-                    className="absolute top-0 bottom-0 w-1 bg-[#435663] shadow-lg"
-                    style={{ left: `${linePercent}%`, transform: "translateX(-50%)" }}
-                  />
-                );
-              })()}
+
+                  const totalRange = 4 - 0;
+                  const linePercent =
+                    ((currentPosition - 0) / totalRange) * 100;
+
+                  return (
+                    <div
+                      className="absolute top-0 bottom-0 w-1 bg-[#435663] shadow-lg"
+                      style={{
+                        left: `${linePercent}%`,
+                        transform: "translateX(-50%)",
+                      }}
+                    />
+                  );
+                })()}
             </div>
-            
+
             <div className="flex justify-center mt-4 gap-3 flex-wrap">
               <Button
                 onClick={playDistanceSequence}
@@ -1384,19 +1486,14 @@ export default function Dashboard() {
                 )}
                 {isPlayingSequence ? "Stop Sequence" : "Play Sequence"}
               </Button>
-              <Button
-                onClick={handleSaveAudioSignals}
-                size="sm"
-                className="bg-[#435663] text-white hover:bg-[#435663]/90"
-              >
-                Save Audio Signals
-              </Button>
             </div>
           </div>
 
           {/* Create Custom Range */}
           <div className="mb-8 bg-[#A3B087]/10 border border-dashed border-[#A3B087] rounded-lg p-6">
-            <h3 className="text-lg font-semibold text-[#313647] mb-4">Create Custom Range</h3>
+            <h3 className="text-lg font-semibold text-[#313647] mb-4">
+              Create Custom Range
+            </h3>
             <div className="grid grid-cols-2 gap-4 mb-4">
               <div className="space-y-2">
                 <label className="text-sm font-medium text-[#313647]">
@@ -1444,12 +1541,19 @@ export default function Dashboard() {
           {/* Distance Trigger Configuration */}
           <div className="space-y-4">
             {distanceTriggers.map((trigger) => (
-              <div key={trigger.id} className="bg-[#FFF8D4] p-4 rounded-lg border border-[#A3B087]/20 space-y-3">
+              <div
+                key={trigger.id}
+                className="bg-[#FFF8D4] p-4 rounded-lg border border-[#A3B087]/20 space-y-3"
+              >
                 <div className="flex justify-between items-center">
                   <h3 className="font-semibold text-[#313647]">
                     {trigger.minDistance}m - {trigger.maxDistance}m
-                    {!["zone1", "zone2", "zone3", "zone4"].includes(trigger.id) && (
-                      <span className="text-xs text-[#A3B087] ml-2">(Custom)</span>
+                    {!["zone1", "zone2", "zone3", "zone4"].includes(
+                      trigger.id,
+                    ) && (
+                      <span className="text-xs text-[#A3B087] ml-2">
+                        (Custom)
+                      </span>
                     )}
                   </h3>
                   <div className="flex items-center gap-2">
@@ -1466,7 +1570,7 @@ export default function Dashboard() {
                     </button>
                   </div>
                 </div>
-                
+
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-[#313647]">
                     Assign Audio:
@@ -1475,9 +1579,11 @@ export default function Dashboard() {
                     value={trigger.audioId || ""}
                     onChange={(e) => {
                       const audioId = e.target.value || null;
-                      const audio = [...PRESET_BUZZER_SOUNDS, ...uploadedAudios, ...savedCustomTones].find(
-                        (a) => a.id === audioId
-                      );
+                      const audio = [
+                        ...PRESET_BUZZER_SOUNDS,
+                        ...uploadedAudios,
+                        ...savedCustomTones,
+                      ].find((a) => a.id === audioId);
                       updateDistanceTrigger(trigger.id, audioId, audio?.name);
                     }}
                     className="w-full px-3 py-2 border border-[#A3B087]/30 rounded-lg text-[#313647] bg-white focus:outline-none focus:ring-2 focus:ring-[#435663]/50"
@@ -1512,6 +1618,50 @@ export default function Dashboard() {
                 </div>
               </div>
             ))}
+          </div>
+
+          {/* Save and Load Buttons */}
+          <div className="mt-8 border-t border-[#A3B087]/20 pt-8 space-y-4">
+            <h3 className="text-lg font-semibold text-[#313647] mb-4">Save & Load Settings</h3>
+            <div className="flex flex-col sm:flex-row gap-4">
+              <Button
+                onClick={handleSaveAndLoad}
+                disabled={
+                  !serialConnected ||
+                  !allRangesAssigned ||
+                  isSavingSettings
+                }
+                size="lg"
+                className={`flex-1 ${
+                  serialConnected && allRangesAssigned
+                    ? "bg-green-600 hover:bg-green-700"
+                    : "bg-gray-400 cursor-not-allowed"
+                } text-white`}
+              >
+                {isSavingSettings ? "Saving..." : "SAVE & LOAD TO ESP32"}
+              </Button>
+              <Button
+                onClick={handleLoadSavedSettings}
+                disabled={!userId}
+                size="lg"
+                variant="outline"
+                className="flex-1 border-[#435663] text-[#435663] hover:bg-[#435663]/10"
+              >
+                Load Saved Settings
+              </Button>
+            </div>
+            <div className="text-sm text-[#A3B087] bg-[#A3B087]/10 p-3 rounded-lg">
+              {serialConnected ? (
+                <p>✓ Serial connected (ID: {userId})</p>
+              ) : (
+                <p>✗ Serial not connected. Connect ESP32 via USB.</p>
+              )}
+              {!allRangesAssigned && (
+                <p className="text-orange-600">
+                  ⚠ Assign audio to all ranges before saving.
+                </p>
+              )}
+            </div>
           </div>
         </div>
       </div>

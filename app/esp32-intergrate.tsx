@@ -56,16 +56,23 @@ export class ESP32Service {
 
         buffer += decoder.decode(value, { stream: true });
 
-        // Process complete lines
-        const lines = buffer.split("\n");
+        // Process complete lines (handle both \n and \r\n)
+        const lines = buffer.split(/\r?\n/);
         buffer = lines.pop() || ""; // Keep incomplete line in buffer
 
         for (const line of lines) {
-          this.processLine(line.trim());
+          const trimmedLine = line.trim();
+          if (trimmedLine) {
+            this.processLine(trimmedLine);
+          }
         }
       }
     } catch (error) {
       console.error("Error reading from ESP32:", error);
+      // Try to restart reading if there's an error
+      if (this.port?.readable) {
+        setTimeout(() => this.startReading(), 1000);
+      }
     } finally {
       this.reader?.releaseLock();
     }
@@ -74,11 +81,26 @@ export class ESP32Service {
   private processLine(line: string): void {
     if (!line) return;
 
-    // Check if it's RFID data (format: "UID: XX XX XX XX")
-    if (line.startsWith("UID:")) {
-      const uid = line.substring(4).trim();
-      if (this.onRFIDCallback) {
-        this.onRFIDCallback(uid);
+    // Check if it's RFID data (format: "UID: XX XX XX XX" or "UID:XX XX XX XX")
+    // Handle both with and without space after colon, case insensitive
+    const uidMatch = line.match(/^UID:\s*(.+)$/i);
+    if (uidMatch) {
+      const uid = uidMatch[1].trim();
+      // Remove any trailing whitespace, newlines, or carriage returns
+      const cleanUid = uid.replace(/[\s\r\n]+$/, "").replace(/^\s+/, "");
+
+      // Only trigger if we have a valid UID (at least 2 characters, typically "XX XX XX XX")
+      if (cleanUid && cleanUid.length >= 2 && this.onRFIDCallback) {
+        // Call callback immediately (synchronously) to ensure it fires
+        // The callback handler will manage navigation timing
+        try {
+          this.onRFIDCallback(cleanUid);
+        } catch (error) {
+          console.error("Error in RFID callback:", error);
+        }
+      } else if (cleanUid && cleanUid.length >= 2 && !this.onRFIDCallback) {
+        // Debug: callback not set
+        console.warn("RFID UID detected but callback not set:", cleanUid);
       }
       return;
     }
@@ -109,6 +131,69 @@ export class ESP32Service {
 
     const encoder = new TextEncoder();
     await this.writer.write(encoder.encode(message));
+  }
+
+  async sendUserSettings(settings: {
+    userId: string;
+    ranges: Array<{
+      minDistance: number;
+      maxDistance: number;
+      audioId: string;
+      audioName?: string;
+    }>;
+    audioFiles: Array<{
+      id: string;
+      identifier: string;
+      name: string;
+      frequency: number;
+      period: number;
+      sourceType: string;
+      sampleCount: number;
+      hexData: string;
+    }>;
+  }): Promise<void> {
+    if (!this.writer) {
+      throw new Error("ESP32 not connected");
+    }
+
+    const encoder = new TextEncoder();
+
+    // Send command to start settings upload
+    const startCommand = `SAVE_SETTINGS:${settings.userId}\n`;
+    await this.writer.write(encoder.encode(startCommand));
+
+    // Wait a bit for ESP32 to be ready
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Send ranges data
+    const rangesData = settings.ranges
+      .map(
+        (r) =>
+          `${r.minDistance.toFixed(2)},${r.maxDistance.toFixed(2)},${r.audioId}`,
+      )
+      .join("|");
+    const rangesMessage = `RANGES:${rangesData}\n`;
+    await this.writer.write(encoder.encode(rangesMessage));
+
+    // Wait a bit
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Send audio files data (simplified - just IDs and identifiers for now)
+    const audioData = settings.audioFiles
+      .map(
+        (a) =>
+          `${a.id}:${a.identifier}:${a.frequency}:${a.period}:${a.sourceType}`,
+      )
+      .join("|");
+    const audioMessage = `AUDIO:${audioData}\n`;
+    await this.writer.write(encoder.encode(audioMessage));
+
+    // Wait a bit
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Send end command
+    const endCommand = `END_SETTINGS\n`;
+    await this.writer.write(encoder.encode(endCommand));
   }
 
   onRadarData(callback: (angle: number, distance: number) => void): void {
