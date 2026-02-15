@@ -5,19 +5,19 @@
       {
         "id": "zone1",
         "minDistance": 0,
-        "maxDistance": 1,
+        "maxDistance": 0.5,
         "soundId": "warning"
       },
       {
         "id": "zone2",
-        "minDistance": 1,
-        "maxDistance": 2,
+        "minDistance": 0.5,
+        "maxDistance": 1,
         "soundId": "alert"
       },
       {
         "id": "zone3",
-        "minDistance": 2,
-        "maxDistance": 4,
+        "minDistance": 1,
+        "maxDistance": 2,
         "soundId": "beep"
       }
     ],

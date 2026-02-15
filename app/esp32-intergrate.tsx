@@ -239,11 +239,11 @@ export class ESP32Service {
     // Wait a bit for ESP32 to be ready
     await new Promise((resolve) => setTimeout(resolve, 100));
 
-    // Send ranges data
+    // Send ranges data (convert meters to centimeters)
     const rangesData = settings.ranges
       .map(
         (r) =>
-          `${r.minDistance.toFixed(2)},${r.maxDistance.toFixed(2)},${r.audioId}`,
+          `${(r.minDistance * 100).toFixed(0)},${(r.maxDistance * 100).toFixed(0)},${r.audioId}`,
       )
       .join("|");
     const rangesMessage = `RANGES:${rangesData}\n`;

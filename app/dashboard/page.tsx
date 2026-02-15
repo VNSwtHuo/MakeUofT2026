@@ -135,9 +135,9 @@ export default function Dashboard() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isPlayingRepeat, setIsPlayingRepeat] = useState(false);
   const [distanceTriggers, setDistanceTriggers] = useState<DistanceTrigger[]>([
-    { id: "zone1", minDistance: 0, maxDistance: 1, audioId: null },
-    { id: "zone2", minDistance: 1, maxDistance: 2, audioId: null },
-    { id: "zone3", minDistance: 2, maxDistance: 4, audioId: null },
+    { id: "zone1", minDistance: 0, maxDistance: 0.5, audioId: null },
+    { id: "zone2", minDistance: 0.5, maxDistance: 1, audioId: null },
+    { id: "zone3", minDistance: 1, maxDistance: 2, audioId: null },
   ]);
   const [newRangeMin, setNewRangeMin] = useState<number | string>(0.1);
   const [newRangeMax, setNewRangeMax] = useState<number | string>(0.5);
@@ -323,8 +323,8 @@ export default function Dashboard() {
       return;
     }
 
-    if (minVal < 0 || maxVal > 4) {
-      alert("Range must be between 0m and 4m");
+    if (minVal < 0 || maxVal > 2.5) {
+      alert("Range must be between 0m and 2.5m");
       return;
     }
 
@@ -537,23 +537,30 @@ export default function Dashboard() {
 
     stopAllAudio();
 
-    // Calculate total sequence duration (through ALL distance triggers, not just those with audio)
-    let totalDuration = 0;
-    distanceTriggers.forEach((trigger) => {
-      const rangeSize = trigger.maxDistance - trigger.minDistance;
-      const durationSeconds = rangeSize * 2; // 2 seconds per meter
-      totalDuration += (durationSeconds + 0.5) * 1000; // Add gap between triggers
-    });
+    // Linear progression: 1.5 seconds per 0.5m (3 seconds per meter) from 0 to 2.5m = 7.5 seconds total
+    const totalRange = 2.5;
+    const totalDuration = totalRange * 3 * 1000; // milliseconds
 
     sequenceStartTimeRef.current = Date.now();
     totalSequenceDurationRef.current = totalDuration;
     setIsPlayingSequence(true);
-    let currentIndex = 0;
+    
+    let lastTriggerId: string | null = null;
 
-    const playNextTrigger = () => {
-      if (currentIndex >= distanceTriggers.length) {
+    const allAudios = [
+      ...PRESET_BUZZER_SOUNDS,
+      ...uploadedAudios,
+      ...savedCustomTones,
+    ];
+
+    // Update function that checks position and plays appropriate audio
+    const updatePosition = () => {
+      const elapsed = Date.now() - sequenceStartTimeRef.current;
+      
+      if (elapsed >= totalDuration) {
+        // Sequence complete
         if (sequenceIntervalRef.current) {
-          clearTimeout(sequenceIntervalRef.current);
+          clearInterval(sequenceIntervalRef.current);
           sequenceIntervalRef.current = null;
         }
         presetRepeatIntervalsRef.current.forEach((intervalId) => {
@@ -563,7 +570,6 @@ export default function Dashboard() {
         if (audioRef.current) {
           audioRef.current.pause();
           audioRef.current.loop = false;
-          audioRef.current.currentTime = 0;
         }
         setIsPlayingSequence(false);
         setPlayingTrigger(null);
@@ -572,68 +578,72 @@ export default function Dashboard() {
         return;
       }
 
-      const trigger = distanceTriggers[currentIndex];
-      const rangeSize = trigger.maxDistance - trigger.minDistance;
-      const durationSeconds = rangeSize * 2; // 2 seconds per meter
+      // Calculate current position (0 to 2.5m)
+      const progress = elapsed / totalDuration;
+      const currentPosition = progress * totalRange;
 
-      presetRepeatIntervalsRef.current.forEach((intervalId) => {
-        clearInterval(intervalId);
-      });
-      presetRepeatIntervalsRef.current.clear();
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.loop = false;
-      }
-
-      setPlayingTrigger(trigger.id);
-      playbackStartTimeRef.current = Date.now();
-      playbackDurationRef.current = durationSeconds * 1000;
-
-      const allAudios = [
-        ...PRESET_BUZZER_SOUNDS,
-        ...uploadedAudios,
-        ...savedCustomTones,
-      ];
-      const audio = trigger.audioId
-        ? allAudios.find((item) => item.id === trigger.audioId) || null
-        : null;
-
-      if (audio) {
-        setActiveSound(audio.id);
-        if (audio.frequency && audio.period) {
-          playTone(audio.frequency, 0.1);
-          const playInterval = setInterval(() => {
-            const elapsed = Date.now() - playbackStartTimeRef.current;
-            if (!isPlayingSequence || elapsed >= playbackDurationRef.current) {
-              clearInterval(playInterval);
-              return;
-            }
-            playTone(audio.frequency!, 0.1);
-          }, audio.period * 1000);
-          presetRepeatIntervalsRef.current.set(
-            `interval-${trigger.id}`,
-            playInterval,
-          );
-        } else if (audio.url) {
-          if (audioRef.current) {
-            audioRef.current.src = audio.url;
-            audioRef.current.loop = true;
-            audioRef.current.currentTime = 0;
-            audioRef.current.play();
-          }
-        }
-      } else {
-        setActiveSound(null);
-      }
-
-      currentIndex++;
-      sequenceIntervalRef.current = setTimeout(
-        playNextTrigger,
-        (durationSeconds + 0.5) * 1000,
+      // Find which trigger zone we're in
+      const currentTrigger = distanceTriggers.find(
+        (t) => currentPosition >= t.minDistance && currentPosition <= t.maxDistance
       );
+
+      // If we've moved to a different trigger, update audio
+      if (currentTrigger?.id !== lastTriggerId) {
+        // Stop previous audio
+        presetRepeatIntervalsRef.current.forEach((intervalId) => {
+          clearInterval(intervalId);
+        });
+        presetRepeatIntervalsRef.current.clear();
+        if (audioRef.current) {
+          audioRef.current.pause();
+          audioRef.current.loop = false;
+        }
+
+        if (currentTrigger) {
+          lastTriggerId = currentTrigger.id;
+          setPlayingTrigger(currentTrigger.id);
+
+          const audio = currentTrigger.audioId
+            ? allAudios.find((item) => item.id === currentTrigger.audioId) || null
+            : null;
+
+          if (audio) {
+            setActiveSound(audio.id);
+            if (audio.frequency && audio.period) {
+              playTone(audio.frequency, 0.1);
+              const intervalKey = `interval-${currentTrigger.id}`;
+              const playInterval = setInterval(() => {
+                // Check if this interval is still active
+                if (!presetRepeatIntervalsRef.current.has(intervalKey)) {
+                  clearInterval(playInterval);
+                  return;
+                }
+                playTone(audio.frequency!, 0.1);
+              }, audio.period * 1000);
+              presetRepeatIntervalsRef.current.set(intervalKey, playInterval);
+            } else if (audio.url) {
+              if (audioRef.current) {
+                audioRef.current.src = audio.url;
+                audioRef.current.loop = true;
+                audioRef.current.currentTime = 0;
+                audioRef.current.play();
+              }
+            }
+          } else {
+            setActiveSound(null);
+          }
+        } else {
+          // Not in any trigger zone
+          lastTriggerId = null;
+          setPlayingTrigger(null);
+          setActiveSound(null);
+        }
+      }
     };
 
-    playNextTrigger();
+    // Check position every 50ms for smooth updates
+    updatePosition(); // Initial call
+    sequenceIntervalRef.current = setInterval(updatePosition, 50);
   };
 
   const getAudioForDistance = (distanceMeters: number): AudioFile | null => {
@@ -1436,20 +1446,20 @@ export default function Dashboard() {
           </h2>
           <p className="text-[#A3B087] mb-6">
             Assign audio files to play when objects are detected within distance
-            ranges (0m - 4m)
+            ranges (0m - 2.5m)
           </p>
 
           {/* Visual Range Display */}
           <div className="mb-8 p-4 bg-[#FFF8D4] rounded-lg border border-[#A3B087]/20">
             <div className="flex items-center justify-between mb-4 px-2">
               <span className="text-sm font-medium text-[#313647]">0m</span>
-              <span className="text-sm font-medium text-[#313647]">4m</span>
+              <span className="text-sm font-medium text-[#313647]">2.5m</span>
             </div>
             <div className="relative h-12 bg-white rounded border border-[#A3B087]/30 overflow-hidden mb-4">
               {/* Background showing all distance ranges */}
               <div className="absolute inset-0">
                 {distanceTriggers.map((trigger) => {
-                  const totalRange = 4 - 0;
+                  const totalRange = 2.5 - 0;
                   const startPercent =
                     ((trigger.minDistance - 0) / totalRange) * 100;
                   const widthPercent =
@@ -1478,7 +1488,7 @@ export default function Dashboard() {
               {/* Vertical line indicator */}
               {isPlayingSequence &&
                 (() => {
-                  // Calculate current position based on elapsed time
+                  // Calculate current position based on elapsed time - move smoothly from 0 to 2.5m
                   if (
                     !sequenceStartTimeRef.current ||
                     !totalSequenceDurationRef.current
@@ -1486,35 +1496,12 @@ export default function Dashboard() {
                     return null;
 
                   const elapsed = Date.now() - sequenceStartTimeRef.current;
-                  let cumulativeTime = 0;
-                  let currentPosition = 0; // Start position
-
-                  for (let i = 0; i < distanceTriggers.length; i++) {
-                    const trigger = distanceTriggers[i];
-                    const rangeSize = trigger.maxDistance - trigger.minDistance;
-                    const durationSeconds = rangeSize * 2;
-                    const triggerDuration = (durationSeconds + 0.5) * 1000; // milliseconds
-
-                    if (elapsed < cumulativeTime + triggerDuration) {
-                      // We're in this trigger
-                      const timeIntoTrigger = elapsed - cumulativeTime;
-                      const audioPlayDuration = durationSeconds * 1000;
-                      const proportionThroughTrigger = Math.min(
-                        timeIntoTrigger / audioPlayDuration,
-                        1,
-                      );
-                      currentPosition =
-                        trigger.minDistance +
-                        proportionThroughTrigger * rangeSize;
-                      break;
-                    }
-
-                    cumulativeTime += triggerDuration;
-                  }
-
-                  const totalRange = 4 - 0;
-                  const linePercent =
-                    ((currentPosition - 0) / totalRange) * 100;
+                  const totalRange = 2.5 - 0;
+                  
+                  // Linear progression from 0 to 2.5m over the total duration
+                  const progress = Math.min(elapsed / totalSequenceDurationRef.current, 1);
+                  const currentPosition = progress * totalRange;
+                  const linePercent = (currentPosition / totalRange) * 100;
 
                   return (
                     <div
@@ -1561,7 +1548,7 @@ export default function Dashboard() {
                 <input
                   type="number"
                   min="0"
-                  max="4"
+                  max="2.5"
                   step="0.1"
                   value={newRangeMin}
                   onChange={(e) => setNewRangeMin(e.target.value)}
@@ -1576,11 +1563,11 @@ export default function Dashboard() {
                 <input
                   type="number"
                   min="0"
-                  max="4"
+                  max="2.5"
                   step="0.1"
                   value={newRangeMax}
                   onChange={(e) => setNewRangeMax(e.target.value)}
-                  placeholder="4"
+                  placeholder="2.5"
                   className="w-full px-3 py-2 border border-[#A3B087]/30 rounded-lg text-[#313647] bg-white"
                 />
               </div>
@@ -1593,7 +1580,7 @@ export default function Dashboard() {
               Add Custom Range
             </Button>
             <p className="text-xs text-[#A3B087] mt-3 italic">
-              Ranges cannot overlap. Valid range: 0m - 4m
+              Ranges cannot overlap. Valid range: 0m - 2.5m
             </p>
           </div>
 

@@ -210,7 +210,7 @@ Stops current audio playback and resets DAC to silence.
    - OR use preset buzzer sounds
 
 4. **Configure Ranges**
-   - Set distance ranges (0-4 meters)
+   - Set distance ranges (0-2.5 meters)
    - Assign audio to each range
    - Add custom ranges if needed
 

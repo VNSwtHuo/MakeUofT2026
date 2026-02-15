@@ -51,7 +51,7 @@ Open http://localhost:3000 in your browser.
 - 🎵 **Custom Audio Upload**: Upload MP3/WAV files (< 1MB)
 - 🎛️ **Tone Generator**: Create custom frequency-based buzzer sounds
 - 🤖 **AI Audio**: Generate voice (TTS) and sound effects via ElevenLabs
-- 📏 **Distance Ranges**: Configure up to multiple detection zones (0-4 meters)
+- 📏 **Distance Ranges**: Configure up to multiple detection zones (0-2.5 meters)
 - 🔌 **Web Serial**: Direct ESP32 communication via browser
 - 💾 **Audio Streaming**: Automatic conversion and transmission to ESP32 SPIFFS
 - 🔊 **DAC Playback**: Real-time audio playback via ESP32 DAC
