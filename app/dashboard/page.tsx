@@ -97,13 +97,12 @@ export default function Dashboard() {
   const [activeSound, setActiveSound] = useState<string | null>(null);
   const [customFrequency, setCustomFrequency] = useState<number | string>(500);
   const [customPeriod, setCustomPeriod] = useState<number | string>(0.5);
-  const [soundGenerationType, setSoundGenerationType] = useState<"tts" | "alarm" | "sfx">("tts");
+  const [soundGenerationType, setSoundGenerationType] = useState<"tts" | "sfx">("tts");
   const [ttsText, setTtsText] = useState<string>("");
   const [selectedVoice, setSelectedVoice] = useState<string>("21m00Tcm4TlvDq8ikWAM");
-  const [alarmFrequency, setAlarmFrequency] = useState<number | string>(800);
-  const [alarmPattern, setAlarmPattern] = useState<"steady" | "pulse" | "siren">("pulse");
-  const [alarmDuration, setAlarmDuration] = useState<number | string>(3);
-  const [sfxType, setSfxType] = useState<"error" | "success" | "warning" | "beep">("beep");
+  const [sfxStyle, setSfxStyle] = useState<string>("sound effect");
+  const [sfxCustomText, setSfxCustomText] = useState<string>("");
+  const [sfxCustomPeriod, setSfxCustomPeriod] = useState<number | string>(0.5);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isPlayingRepeat, setIsPlayingRepeat] = useState(false);
   const [distanceTriggers, setDistanceTriggers] = useState<DistanceTrigger[]>([
@@ -295,71 +294,75 @@ export default function Dashboard() {
 
     const playNextTrigger = () => {
       if (currentIndex >= distanceTriggers.length) {
-        // Sequence complete
+        if (sequenceIntervalRef.current) {
+          clearTimeout(sequenceIntervalRef.current);
+          sequenceIntervalRef.current = null;
+        }
+        presetRepeatIntervalsRef.current.forEach((intervalId) => {
+          clearInterval(intervalId);
+        });
+        presetRepeatIntervalsRef.current.clear();
+        if (audioRef.current) {
+          audioRef.current.pause();
+          audioRef.current.loop = false;
+          audioRef.current.currentTime = 0;
+        }
         setIsPlayingSequence(false);
         setPlayingTrigger(null);
         setActiveSound(null);
-        if (audioRef.current) {
-          audioRef.current.loop = false;
-        }
+        setPlaybackProgress(0);
         return;
       }
 
       const trigger = distanceTriggers[currentIndex];
-      setPlayingTrigger(trigger.id);
-      
-      // Stop any previously playing audio
+      const rangeSize = trigger.maxDistance - trigger.minDistance;
+      const durationSeconds = rangeSize * 2; // 2 seconds per meter
+
       presetRepeatIntervalsRef.current.forEach((intervalId) => {
         clearInterval(intervalId);
       });
       presetRepeatIntervalsRef.current.clear();
       if (audioRef.current) {
         audioRef.current.pause();
-        audioRef.current.currentTime = 0;
+        audioRef.current.loop = false;
       }
-      
-      const audio = [...PRESET_BUZZER_SOUNDS, ...uploadedAudios].find(
-        (a) => a.id === trigger.audioId
-      );
+
+      setPlayingTrigger(trigger.id);
+      playbackStartTimeRef.current = Date.now();
+      playbackDurationRef.current = durationSeconds * 1000;
+
+      const allAudios = [...PRESET_BUZZER_SOUNDS, ...uploadedAudios, ...savedCustomTones];
+      const audio = trigger.audioId
+        ? allAudios.find((item) => item.id === trigger.audioId) || null
+        : null;
 
       if (audio) {
         setActiveSound(audio.id);
-        // Calculate duration: 2 seconds per meter
-        const rangeSize = trigger.maxDistance - trigger.minDistance;
-        const durationSeconds = rangeSize * 2; // 2 seconds per meter
-        const duration = durationSeconds * 1000;
-        
         if (audio.frequency && audio.period) {
-          // Play tone with its original period repeated for proportional duration (works for presets and custom tones)
-          const startTime = Date.now();
-          playTone(audio.frequency!, 0.1); // Play immediately
-          
+          playTone(audio.frequency, 0.1);
           const playInterval = setInterval(() => {
-            if (Date.now() - startTime >= duration) {
+            const elapsed = Date.now() - playbackStartTimeRef.current;
+            if (!isPlayingSequence || elapsed >= playbackDurationRef.current) {
               clearInterval(playInterval);
-            } else {
-              playTone(audio.frequency!, 0.1);
+              return;
             }
+            playTone(audio.frequency!, 0.1);
           }, audio.period * 1000);
           presetRepeatIntervalsRef.current.set(`interval-${trigger.id}`, playInterval);
         } else if (audio.url) {
-          // Play uploaded file with looping during distance sequence
           if (audioRef.current) {
             audioRef.current.src = audio.url;
-            audioRef.current.loop = true; // Loop if audio ends before segment duration
+            audioRef.current.loop = true;
             audioRef.current.currentTime = 0;
             audioRef.current.play();
           }
         }
       } else {
-        // No audio assigned to this range, clear active sound state
         setActiveSound(null);
       }
 
       currentIndex++;
-      const rangeSize = trigger.maxDistance - trigger.minDistance;
-      const durationSeconds = rangeSize * 2; // 2 seconds per meter
-      sequenceIntervalRef.current = setTimeout(playNextTrigger, (durationSeconds + 0.5) * 1000); // Add 0.5s gap
+      sequenceIntervalRef.current = setTimeout(playNextTrigger, (durationSeconds + 0.5) * 1000);
     };
 
     playNextTrigger();
@@ -495,173 +498,56 @@ export default function Dashboard() {
     }
   };
 
-  const generateAlarm = () => {
-    const freq = typeof alarmFrequency === 'string' ? parseInt(alarmFrequency) : alarmFrequency;
-    const duration = typeof alarmDuration === 'string' ? parseFloat(alarmDuration) : alarmDuration;
 
-    if (isNaN(freq) || isNaN(duration) || duration <= 0) {
-      alert("Please enter valid frequency and duration");
+  const generateSFX = async () => {
+    if (!sfxCustomText.trim()) {
+      alert("Please enter text for the sound effect");
       return;
     }
 
     setIsGenerating(true);
 
-    // Create alarm sound using Web Audio API
-    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-    const durationSeconds = Math.min(duration, 10); // Max 10 seconds
-    const sampleRate = audioContext.sampleRate;
-    const numSamples = durationSeconds * sampleRate;
-    const audioBuffer = audioContext.createBuffer(1, numSamples, sampleRate);
-    const data = audioBuffer.getChannelData(0);
+    try {
+      const periodValue = typeof sfxCustomPeriod === 'string' ? parseFloat(sfxCustomPeriod) : sfxCustomPeriod;
+      const durationMs = Math.round(Math.max(0.1, Math.min(5, periodValue)) * 1000);
 
-    let t = 0;
-    if (alarmPattern === "steady") {
-      for (let i = 0; i < numSamples; i++) {
-        data[i] = Math.sin((2 * Math.PI * freq * t) / sampleRate) * 0.3;
-        t++;
+      const response = await fetch("/api/elevenlabs/music", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          prompt: sfxCustomText,
+          style: sfxStyle,
+          durationMs,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `API error: ${response.status}`);
       }
-    } else if (alarmPattern === "pulse") {
-      for (let i = 0; i < numSamples; i++) {
-        const beatFreq = 3; // 3 Hz pulse
-        const envelope = Math.sin((Math.PI * beatFreq * t) / sampleRate) > 0 ? 0.3 : 0;
-        data[i] = Math.sin((2 * Math.PI * freq * t) / sampleRate) * envelope;
-        t++;
-      }
-    } else if (alarmPattern === "siren") {
-      for (let i = 0; i < numSamples; i++) {
-        const freqVariation = freq + (200 * Math.sin((2 * Math.PI * 2 * t) / sampleRate));
-        data[i] = Math.sin((2 * Math.PI * freqVariation * t) / sampleRate) * 0.3;
-        t++;
-      }
+
+      const audioBlob = await response.blob();
+      const url = URL.createObjectURL(audioBlob);
+
+      const newAudio: AudioFile = {
+        id: `sfx-${Date.now()}-${Math.random()}`,
+        name: `SFX: ${sfxCustomText}`,
+        url: url,
+        isPreset: false,
+      };
+
+      setUploadedAudios((prev) => [...prev, newAudio]);
+      setSfxCustomText("");
+      alert("Sound effect generated and added to Custom Audio Files!");
+    } catch (error) {
+      console.error("SFX generation error:", error);
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      alert(`Failed to generate sound effect: ${errorMessage}`);
+    } finally {
+      setIsGenerating(false);
     }
-
-    // Convert to WAV and create blob
-    const wav = audioBufferToWav(audioBuffer);
-    const blob = new Blob([wav], { type: "audio/wav" });
-    const url = URL.createObjectURL(blob);
-
-    const newAudio: AudioFile = {
-      id: `alarm-${Date.now()}-${Math.random()}`,
-      name: `Alarm: ${freq}Hz ${alarmPattern}`,
-      url: url,
-      isPreset: false,
-    };
-
-    setUploadedAudios((prev) => [...prev, newAudio]);
-    setIsGenerating(false);
-    alert("Alarm generated and added to Custom Audio Files!");
-  };
-
-  const generateSFX = () => {
-    setIsGenerating(true);
-
-    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-    const sampleRate = audioContext.sampleRate;
-    const duration = 0.5; // 500ms per sound effect
-    const numSamples = duration * sampleRate;
-    const audioBuffer = audioContext.createBuffer(1, numSamples, sampleRate);
-    const data = audioBuffer.getChannelData(0);
-
-    let t = 0;
-    if (sfxType === "success") {
-      // Rising tone: 400Hz -> 800Hz
-      for (let i = 0; i < numSamples; i++) {
-        const freq = 400 + (400 * i / numSamples);
-        const envelope = 1 - (i / numSamples); // Fade out
-        data[i] = Math.sin((2 * Math.PI * freq * t) / sampleRate) * envelope * 0.3;
-        t++;
-      }
-    } else if (sfxType === "error") {
-      // Falling tone: 800Hz -> 400Hz
-      for (let i = 0; i < numSamples; i++) {
-        const freq = 800 - (400 * i / numSamples);
-        const envelope = 1 - (i / numSamples);
-        data[i] = Math.sin((2 * Math.PI * freq * t) / sampleRate) * envelope * 0.3;
-        t++;
-      }
-    } else if (sfxType === "warning") {
-      // Alternating tones: 600Hz and 700Hz
-      for (let i = 0; i < numSamples; i++) {
-        const freq = (i / numSamples) * 2 % 1 > 0.5 ? 600 : 700;
-        const envelope = 1 - (i / numSamples);
-        data[i] = Math.sin((2 * Math.PI * freq * t) / sampleRate) * envelope * 0.3;
-        t++;
-      }
-    } else if (sfxType === "beep") {
-      // Simple beep: 500Hz
-      for (let i = 0; i < numSamples; i++) {
-        const envelope = 1 - (i / numSamples);
-        data[i] = Math.sin((2 * Math.PI * 500 * t) / sampleRate) * envelope * 0.3;
-        t++;
-      }
-    }
-
-    const wav = audioBufferToWav(audioBuffer);
-    const blob = new Blob([wav], { type: "audio/wav" });
-    const url = URL.createObjectURL(blob);
-
-    const newAudio: AudioFile = {
-      id: `sfx-${Date.now()}-${Math.random()}`,
-      name: `SFX: ${sfxType}`,
-      url: url,
-      isPreset: false,
-    };
-
-    setUploadedAudios((prev) => [...prev, newAudio]);
-    setIsGenerating(false);
-    alert("Sound effect generated and added to Custom Audio Files!");
-  };
-
-  // Helper function to convert AudioBuffer to WAV
-  const audioBufferToWav = (audioBuffer: AudioBuffer): ArrayBuffer => {
-    const numChannels = audioBuffer.numberOfChannels;
-    const sampleRate = audioBuffer.sampleRate;
-    const format = 1; // PCM
-    const bitDepth = 16;
-    const bytesPerSample = bitDepth / 8;
-
-    const channelData = Array.from({ length: numChannels }, (_, i) =>
-      audioBuffer.getChannelData(i)
-    );
-
-    const frameLength = audioBuffer.length;
-    const dataLength = frameLength * numChannels * bytesPerSample;
-    const bufferLength = 44 + dataLength;
-    const buffer = new ArrayBuffer(bufferLength);
-    const view = new DataView(buffer);
-
-    // WAV header
-    const writeString = (offset: number, string: string) => {
-      for (let i = 0; i < string.length; i++) {
-        view.setUint8(offset + i, string.charCodeAt(i));
-      }
-    };
-
-    writeString(0, "RIFF");
-    view.setUint32(4, bufferLength - 8, true);
-    writeString(8, "WAVE");
-    writeString(12, "fmt ");
-    view.setUint32(16, 16, true); // Subchunk1Size
-    view.setUint16(20, format, true);
-    view.setUint16(22, numChannels, true);
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate * numChannels * bytesPerSample, true);
-    view.setUint16(32, numChannels * bytesPerSample, true);
-    view.setUint16(34, bitDepth, true);
-    writeString(36, "data");
-    view.setUint32(40, dataLength, true);
-
-    // Write samples
-    let offset = 44;
-    for (let i = 0; i < frameLength; i++) {
-      for (let j = 0; j < numChannels; j++) {
-        const sample = Math.max(-1, Math.min(1, channelData[j][i]));
-        view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
-        offset += 2;
-      }
-    }
-
-    return buffer;
   };
 
   const handleLogout = () => {
@@ -1064,7 +950,6 @@ export default function Dashboard() {
             {(
               [
                 { type: "tts" as const, label: "Text-to-Speech" },
-                { type: "alarm" as const, label: "Alarms" },
                 { type: "sfx" as const, label: "Sound Effects" },
               ] as const
             ).map((tab) => (
@@ -1132,115 +1017,62 @@ export default function Dashboard() {
               </>
             )}
 
-            {/* Alarms Section */}
-            {soundGenerationType === "alarm" && (
-              <>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-3">
-                    <label className="text-lg font-medium text-[#313647]">
-                      Frequency (Hz)
-                    </label>
-                    <input
-                      type="number"
-                      min="200"
-                      max="2000"
-                      value={alarmFrequency}
-                      onChange={(e) => setAlarmFrequency(e.target.value)}
-                      className="w-full px-4 py-2 border border-[#A3B087]/30 rounded-lg text-[#313647] bg-white"
-                    />
-                  </div>
-                  <div className="space-y-3">
-                    <label className="text-lg font-medium text-[#313647]">
-                      Duration (seconds)
-                    </label>
-                    <input
-                      type="number"
-                      min="0.5"
-                      max="10"
-                      step="0.5"
-                      value={alarmDuration}
-                      onChange={(e) => setAlarmDuration(e.target.value)}
-                      className="w-full px-4 py-2 border border-[#A3B087]/30 rounded-lg text-[#313647] bg-white"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-3">
-                  <label className="text-lg font-medium text-[#313647]">
-                    Alarm Pattern
-                  </label>
-                  <div className="grid grid-cols-3 gap-3">
-                    {(
-                      [
-                        { value: "steady" as const, label: "Steady" },
-                        { value: "pulse" as const, label: "Pulse" },
-                        { value: "siren" as const, label: "Siren" },
-                      ] as const
-                    ).map((pattern) => (
-                      <button
-                        key={pattern.value}
-                        onClick={() => setAlarmPattern(pattern.value)}
-                        className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                          alarmPattern === pattern.value
-                            ? "bg-[#435663] text-white"
-                            : "bg-[#A3B087]/10 text-[#313647] hover:bg-[#A3B087]/20"
-                        }`}
-                      >
-                        {pattern.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <Button
-                  onClick={generateAlarm}
-                  disabled={isGenerating}
-                  size="lg"
-                  className="w-full bg-orange-600 text-white hover:bg-orange-700 disabled:bg-gray-400"
-                >
-                  {isGenerating ? "Generating..." : "Generate Alarm"}
-                </Button>
-              </>
-            )}
 
             {/* Sound Effects Section */}
             {soundGenerationType === "sfx" && (
               <>
-                <div className="space-y-3">
-                  <label className="text-lg font-medium text-[#313647]">
-                    Sound Effect Type
-                  </label>
-                  <div className="grid grid-cols-2 gap-3">
-                    {(
-                      [
-                        { value: "beep" as const, label: "Beep" },
-                        { value: "success" as const, label: "Success" },
-                        { value: "warning" as const, label: "Warning" },
-                        { value: "error" as const, label: "Error" },
-                      ] as const
-                    ).map((sfx) => (
-                      <button
-                        key={sfx.value}
-                        onClick={() => setSfxType(sfx.value)}
-                        className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                          sfxType === sfx.value
-                            ? "bg-[#435663] text-white"
-                            : "bg-[#A3B087]/10 text-[#313647] hover:bg-[#A3B087]/20"
-                        }`}
+                <div className="space-y-4 bg-[#A3B087]/10 p-4 rounded-lg border border-[#A3B087]/30">
+                  <div className="space-y-3">
+                    <label className="text-lg font-medium text-[#313647]">
+                      Custom Sound Effect
+                    </label>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-[#313647]">
+                        Style
+                      </label>
+                      <select
+                        value={sfxStyle}
+                        onChange={(e) => setSfxStyle(e.target.value)}
+                        className="w-full px-3 py-2 border border-[#A3B087]/30 rounded-lg text-[#313647] bg-white focus:outline-none focus:border-[#435663]"
                       >
-                        {sfx.label}
-                      </button>
-                    ))}
+                        <option value="sound effect">Sound Effect</option>
+                        <option value="impact">Impact</option>
+                        <option value="whoosh">Whoosh</option>
+                        <option value="mechanical">Mechanical</option>
+                        <option value="ambient">Ambient</option>
+                        <option value="organic">Organic</option>
+                        <option value="sci-fi">Sci-Fi</option>
+                      </select>
+                    </div>
+                    <textarea
+                      value={sfxCustomText}
+                      onChange={(e) => setSfxCustomText(e.target.value)}
+                      placeholder="Enter a name or description for your custom sound effect..."
+                      className="w-full px-4 py-3 border border-[#A3B087]/30 rounded-lg text-[#313647] bg-white focus:outline-none focus:border-[#435663] min-h-20"
+                    />
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-[#313647]">
+                        Duration (seconds)
+                      </label>
+                      <input
+                        type="number"
+                        min="0.1"
+                        max="5"
+                        step="0.1"
+                        value={sfxCustomPeriod}
+                        onChange={(e) => setSfxCustomPeriod(e.target.value)}
+                        className="w-full px-3 py-2 border border-[#A3B087]/30 rounded-lg text-[#313647] bg-white focus:outline-none focus:border-[#435663]"
+                      />
+                    </div>
+                    <p className="text-sm text-[#A3B087]">
+                      💡 Creates a sound effect based on your text input (0.1s - 5s duration)
+                    </p>
                   </div>
                 </div>
 
-                <p className="text-sm text-[#A3B087]">
-                  💡 Generates a 500ms sound effect based on type
-                </p>
-
                 <Button
                   onClick={generateSFX}
-                  disabled={isGenerating}
+                  disabled={isGenerating || !sfxCustomText.trim()}
                   size="lg"
                   className="w-full bg-green-600 text-white hover:bg-green-700 disabled:bg-gray-400"
                 >

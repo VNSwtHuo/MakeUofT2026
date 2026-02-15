@@ -2,22 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(request: NextRequest) {
   try {
-    const { prompt, style, durationMs } = await request.json();
+    const { description, duration_seconds } = await request.json();
 
-    if (!prompt) {
+    if (!description) {
       return NextResponse.json(
-        { error: 'Missing required field: prompt' },
+        { error: 'Missing required field: description' },
         { status: 400 }
       );
     }
-
-    const normalizedStyle = typeof style === 'string' && style.trim()
-      ? style.trim()
-      : 'sound effect';
-    const normalizedDurationMs = Math.min(
-      30000,
-      Math.max(100, Number(durationMs) || 3000)
-    );
 
     const apiKey = process.env.ELEVENLABS_API_KEY;
     if (!apiKey) {
@@ -27,17 +19,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const response = await fetch('https://api.elevenlabs.io/v1/sound-generation', {
+    // Clamp duration to reasonable bounds
+    const duration = Math.max(0.1, Math.min(duration_seconds || 1, 5));
+
+    const response = await fetch(`https://api.elevenlabs.io/v1/sound-generation/generate`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'xi-api-key': apiKey,
       },
       body: JSON.stringify({
-        text: prompt,
-        style: normalizedStyle,
-        duration_ms: normalizedDurationMs,
-        duration_seconds: Math.round(normalizedDurationMs / 100) / 10,
+        text: description,
+        duration_seconds: duration,
+        prompt_influence: 0.3,
       }),
     });
 
@@ -55,13 +49,13 @@ export async function POST(request: NextRequest) {
     return new NextResponse(audioBuffer, {
       headers: {
         'Content-Type': 'audio/mpeg',
-        'Cache-Control': 'no-cache',
+        'Cache-Control': 'public, max-age=3600',
       },
     });
   } catch (error) {
-    console.error('Music generation API error:', error);
+    console.error('SFX generation error:', error);
     return NextResponse.json(
-      { error: `Failed to generate music: ${(error as Error).message}` },
+      { error: error instanceof Error ? error.message : 'Unknown error occurred' },
       { status: 500 }
     );
   }

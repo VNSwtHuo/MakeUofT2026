@@ -69,7 +69,7 @@ export default function LoginScreen() {
               variant="outline"
               className="bg-[#435663] text-white hover:bg-[#435663]/90 hover:text-white"
             >
-              {isLoading ? "Scanning..." : "Guest - Simulate RFID Scan"}
+              {isLoading ? "Loading..." : "Guest Login"}
             </Button>
           </div>
         </div>
