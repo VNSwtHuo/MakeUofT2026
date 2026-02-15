@@ -1,6 +1,7 @@
 "use client";
 
 import { LogOut, Upload, Volume2, Play, Pause } from "lucide-react";
+import JSZip from "jszip";
 import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
 import { useState, useRef, useEffect } from "react";
@@ -68,9 +69,17 @@ const ELEVENLABS_VOICES = [
   { id: "GhkQkxbimoIykF4iGYqh", name: "Kyle - Neutral" },
 ];
 
+let toneAudioContext: AudioContext | null = null;
+
 // Function to play a tone using Web Audio API
 const playTone = (frequency: number, duration: number) => {
-  const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+  if (!toneAudioContext) {
+    toneAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+  }
+  const audioContext = toneAudioContext;
+  if (audioContext.state === "suspended") {
+    audioContext.resume().catch(() => null);
+  }
   const oscillator = audioContext.createOscillator();
   const gainNode = audioContext.createGain();
 
@@ -83,8 +92,9 @@ const playTone = (frequency: number, duration: number) => {
   gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
   gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
 
-  oscillator.start(audioContext.currentTime);
-  oscillator.stop(audioContext.currentTime + duration);
+  const startTime = audioContext.currentTime;
+  oscillator.start(startTime);
+  oscillator.stop(startTime + duration);
 };
 
 export default function Dashboard() {
@@ -117,6 +127,7 @@ export default function Dashboard() {
   const [playingTrigger, setPlayingTrigger] = useState<string | null>(null);
   const [playbackProgress, setPlaybackProgress] = useState(0); // 0-100
   const sequenceIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const isPlayingSequenceRef = useRef(false);
   const playbackStartTimeRef = useRef<number>(0);
   const playbackDurationRef = useRef<number>(0);
   const sequenceStartTimeRef = useRef<number>(0);
@@ -197,6 +208,7 @@ export default function Dashboard() {
     setActiveSound(null);
     setIsPlayingRepeat(false);
     setIsPlayingSequence(false);
+    isPlayingSequenceRef.current = false;
     setPlayingTrigger(null);
     setPlaybackProgress(0);
   };
@@ -250,6 +262,225 @@ export default function Dashboard() {
     setNewRangeMax(0.5);
   };
 
+  const handleSaveAudioSignals = async () => {
+    const esc = (value: string) =>
+      value.replace(/\\/g, "\\\\").replace(/\"/g, "\\\"").replace(/\r?\n/g, " ");
+    const toIdentifier = (value: string, index: number) => {
+      const normalized = value.replace(/[^a-zA-Z0-9_]/g, "_");
+      const trimmed = normalized.replace(/^_+/, "");
+      const base = trimmed.length > 0 ? trimmed : `audio_${index}`;
+      return /^[a-zA-Z]/.test(base) ? base : `audio_${base}`;
+    };
+
+    const sampleRate = 8000;
+    const maxDurationSeconds = 5;
+    const amplitude = 127;
+
+    const decodeAudio = async (audioUrl: string) => {
+      const response = await fetch(audioUrl);
+      const arrayBuffer = await response.arrayBuffer();
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const decoded = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+      return decoded;
+    };
+
+    const downmixToMono = (buffer: AudioBuffer) => {
+      if (buffer.numberOfChannels === 1) {
+        return buffer;
+      }
+      const monoBuffer = new AudioBuffer({
+        length: buffer.length,
+        numberOfChannels: 1,
+        sampleRate: buffer.sampleRate,
+      });
+      const monoData = monoBuffer.getChannelData(0);
+      for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
+        const channelData = buffer.getChannelData(channel);
+        for (let i = 0; i < channelData.length; i++) {
+          monoData[i] += channelData[i] / buffer.numberOfChannels;
+        }
+      }
+      return monoBuffer;
+    };
+
+    const resampleToTarget = async (buffer: AudioBuffer, targetSampleRate: number) => {
+      if (buffer.sampleRate === targetSampleRate) {
+        return buffer;
+      }
+      const offlineContext = new OfflineAudioContext(
+        1,
+        Math.ceil(buffer.duration * targetSampleRate),
+        targetSampleRate
+      );
+      const source = offlineContext.createBufferSource();
+      source.buffer = buffer;
+      source.connect(offlineContext.destination);
+      source.start(0);
+      return await offlineContext.startRendering();
+    };
+
+    const allAudios = [...PRESET_BUZZER_SOUNDS, ...uploadedAudios, ...savedCustomTones];
+    const triggeredIds = distanceTriggers
+      .map((trigger) => trigger.audioId)
+      .filter((id): id is string => Boolean(id));
+    const triggeredAudios = triggeredIds
+      .map((id) => allAudios.find((audio) => audio.id === id))
+      .filter((audio): audio is AudioFile => Boolean(audio));
+
+    const uniqueAudios = Array.from(new Map(triggeredAudios.map((audio) => [audio.id, audio])).values());
+    const audioMeta = await Promise.all(uniqueAudios.map(async (audio, index) => {
+      const fallbackSource = audio.frequency && audio.period ? "saved-tone" : "uploaded";
+      const sourceType = audio.sourceType || fallbackSource;
+      const frequency = typeof audio.frequency === "number" ? audio.frequency : 0;
+      const period = typeof audio.period === "number" ? audio.period : 0;
+      const identifier = toIdentifier(audio.id, index);
+
+      let samples: number[] = [];
+      if (frequency > 0 && period > 0) {
+        const duration = Math.max(0.05, period);
+        const sampleCount = Math.max(1, Math.round(sampleRate * duration));
+        samples = Array.from({ length: sampleCount }, (_, i) => {
+          const t = i / sampleRate;
+          const value = Math.sin(2 * Math.PI * frequency * t);
+          const sample = Math.round(128 + value * amplitude);
+          return Math.max(0, Math.min(255, sample));
+        });
+      } else if (audio.url) {
+        try {
+          const decoded = await decodeAudio(audio.url);
+          const mono = downmixToMono(decoded);
+          const resampled = await resampleToTarget(mono, sampleRate);
+          const channel = resampled.getChannelData(0);
+          const maxSamples = Math.min(channel.length, Math.round(sampleRate * maxDurationSeconds));
+          samples = Array.from({ length: maxSamples }, (_, i) => {
+            const value = channel[i];
+            const sample = Math.round((value + 1) * 127.5);
+            return Math.max(0, Math.min(255, sample));
+          });
+        } catch (error) {
+          console.error("Audio decode failed:", error);
+          samples = [128];
+        }
+      } else {
+        samples = [128];
+      }
+
+      const hexLines: string[] = [];
+      for (let i = 0; i < samples.length; i += 12) {
+        const slice = samples.slice(i, i + 12).map((value) =>
+          `0x${value.toString(16).padStart(2, "0")}`
+        );
+        hexLines.push(`  ${slice.join(", ")}`);
+      }
+
+      return {
+        audio,
+        identifier,
+        sourceType,
+        frequency,
+        period,
+        sampleCount: samples.length,
+        hexLines,
+        isPlaceholder: samples.length <= 1,
+      };
+    }));
+
+    const triggerEntries = distanceTriggers.map((trigger) => (
+      `  {${trigger.minDistance}, ${trigger.maxDistance}, "${esc(trigger.audioId || "")}"}`
+    ));
+
+    const audioEntries = audioMeta.map((entry) => (
+      `  {"${esc(entry.audio.id)}", "${esc(entry.audio.name)}", ${entry.frequency}, ${entry.period}, "${esc(entry.sourceType)}", AUDIO_DATA_${entry.identifier}, ${entry.sampleCount}, ${sampleRate}}`
+    ));
+
+    const audioIncludes = audioMeta.map((entry) => (
+      `#include "audio/audio_data_${entry.identifier}.h"`
+    ));
+
+    const audioDataFiles = audioMeta.map((entry) => {
+      const guard = `AUDIO_DATA_${entry.identifier.toUpperCase()}_H`;
+      const comment = entry.isPlaceholder
+        ? `// Placeholder: ${esc(entry.audio.name)} had no decodable audio`
+        : `// ${esc(entry.audio.name)}`;
+      const content = [
+        `#ifndef ${guard}`,
+        `#define ${guard}`,
+        "",
+        "#include <stdint.h>",
+        "",
+        comment,
+        `#define AUDIO_DATA_${entry.identifier}_LEN ${entry.sampleCount}`,
+        `#define AUDIO_DATA_${entry.identifier}_RATE ${sampleRate}`,
+        `static const uint8_t AUDIO_DATA_${entry.identifier}[AUDIO_DATA_${entry.identifier}_LEN] = {`,
+        entry.hexLines.join(",\n"),
+        "};",
+        "",
+        `#endif // ${guard}`,
+        "",
+      ].join("\n");
+
+      return {
+        fileName: `audio/audio_data_${entry.identifier}.h`,
+        content,
+      };
+    });
+
+    const header = [
+      "#ifndef AUDIO_SIGNALS_CONFIG_H",
+      "#define AUDIO_SIGNALS_CONFIG_H",
+      "",
+      "#include <stdint.h>",
+      ...audioIncludes,
+      "",
+      "typedef struct {",
+      "  const char* id;",
+      "  const char* name;",
+      "  float frequency_hz;",
+      "  float period_s;",
+      "  const char* source;",
+      "  const uint8_t* data;",
+      "  uint32_t length;",
+      "  uint32_t sample_rate;",
+      "} AudioSignal;",
+      "",
+      "typedef struct {",
+      "  float min_m;",
+      "  float max_m;",
+      "  const char* audio_id;",
+      "} DistanceTrigger;",
+      "",
+      `#define AUDIO_SIGNAL_COUNT ${audioEntries.length}`,
+      `#define DISTANCE_TRIGGER_COUNT ${triggerEntries.length}`,
+      "",
+      "static const AudioSignal AUDIO_SIGNALS[AUDIO_SIGNAL_COUNT] = {",
+      audioEntries.join(",\n"),
+      "};",
+      "",
+      "static const DistanceTrigger DISTANCE_TRIGGERS[DISTANCE_TRIGGER_COUNT] = {",
+      triggerEntries.join(",\n"),
+      "};",
+      "",
+      "#endif // AUDIO_SIGNALS_CONFIG_H",
+      "",
+    ].join("\n");
+
+    const zip = new JSZip();
+    zip.file("audio_signals_config.h", header);
+    audioDataFiles.forEach((file) => {
+      zip.file(file.fileName, file.content);
+    });
+
+    const blob = await zip.generateAsync({ type: "blob" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "audio_signals_export.zip";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
   const deleteCustomRange = (triggerId: string) => {
     setDistanceTriggers((prev) => prev.filter((trigger) => trigger.id !== triggerId));
   };
@@ -270,6 +501,7 @@ export default function Dashboard() {
         audioRef.current.pause();
         audioRef.current.loop = false;
       }
+      isPlayingSequenceRef.current = false;
       setIsPlayingSequence(false);
       setPlayingTrigger(null);
       setPlaybackProgress(0);
@@ -289,7 +521,7 @@ export default function Dashboard() {
     
     sequenceStartTimeRef.current = Date.now();
     totalSequenceDurationRef.current = totalDuration;
-    
+    isPlayingSequenceRef.current = true;
     setIsPlayingSequence(true);
     let currentIndex = 0;
 
@@ -308,6 +540,7 @@ export default function Dashboard() {
           audioRef.current.loop = false;
           audioRef.current.currentTime = 0;
         }
+        isPlayingSequenceRef.current = false;
         setIsPlayingSequence(false);
         setPlayingTrigger(null);
         setActiveSound(null);
@@ -343,7 +576,7 @@ export default function Dashboard() {
           playTone(audio.frequency, 0.1);
           const playInterval = setInterval(() => {
             const elapsed = Date.now() - playbackStartTimeRef.current;
-            if (!isPlayingSequence || elapsed >= playbackDurationRef.current) {
+            if (!isPlayingSequenceRef.current || elapsed >= playbackDurationRef.current) {
               clearInterval(playInterval);
               return;
             }
@@ -1134,7 +1367,7 @@ export default function Dashboard() {
               })()}
             </div>
             
-            <div className="flex justify-center mt-4">
+            <div className="flex justify-center mt-4 gap-3 flex-wrap">
               <Button
                 onClick={playDistanceSequence}
                 size="sm"
@@ -1150,6 +1383,13 @@ export default function Dashboard() {
                   <Play className="mr-2 size-4" />
                 )}
                 {isPlayingSequence ? "Stop Sequence" : "Play Sequence"}
+              </Button>
+              <Button
+                onClick={handleSaveAudioSignals}
+                size="sm"
+                className="bg-[#435663] text-white hover:bg-[#435663]/90"
+              >
+                Save Audio Signals
               </Button>
             </div>
           </div>
