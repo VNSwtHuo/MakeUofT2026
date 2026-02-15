@@ -1,11 +1,20 @@
+"use client";
+
 import { Radar, Scan } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
 
-interface LoginScreenProps {
-  onDemoLogin: () => void;
-}
+export default function LoginScreen() {
+  const router = useRouter();
+  const [isLoading, setIsLoading] = useState(false);
 
-export default function LoginScreen({ onDemoLogin }: LoginScreenProps) {
+  const handleDemoLogin = () => {
+    setIsLoading(true);
+    setTimeout(() => {
+      router.push("/dashboard");
+    }, 1000);
+  };
   return (
     <div className="min-h-screen flex flex-col items-center justify-center px-4">
       <div className="w-full max-w-2xl text-center space-y-8">
@@ -54,12 +63,13 @@ export default function LoginScreen({ onDemoLogin }: LoginScreenProps) {
           <div className="inline-flex flex-col items-center gap-3">
             <span className="text-sm text-muted-foreground">Demo Mode</span>
             <Button
-              onClick={onDemoLogin}
+              onClick={handleDemoLogin}
+              disabled={isLoading}
               size="lg"
               variant="outline"
               className="bg-[#435663] text-white hover:bg-[#435663]/90 hover:text-white"
             >
-              Simulate RFID Scan
+              {isLoading ? "Scanning..." : "Guest - Simulate RFID Scan"}
             </Button>
           </div>
         </div>
