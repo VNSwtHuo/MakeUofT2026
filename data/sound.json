@@ -1,0 +1,24 @@
+{
+  "preloadedSounds": [
+    {
+      "id": "beeping",
+      "name": "Beeping",
+      "description": "Standard beep alert"
+    },
+    {
+      "id": "siren",
+      "name": "Siren",
+      "description": "Emergency siren sound"
+    },
+    {
+      "id": "chime",
+      "name": "Chime",
+      "description": "Gentle chime notification"
+    },
+    {
+      "id": "warning",
+      "name": "Warning Tone",
+      "description": "Warning alert tone"
+    }
+  ]
+}

@@ -41,7 +41,7 @@ export default function LoginScreen({ onDemoLogin }: LoginScreenProps) {
 
             <div className="space-y-2">
               <h2 className="text-2xl text-[#313647] font-semibold tracking-tight">
-                Authentication Required
+                Scan Required
               </h2>
               <p className="text-[#A3B087]">
                 Please tap your RFID card on the scanner to access the system
