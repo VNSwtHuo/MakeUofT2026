@@ -14,7 +14,12 @@ import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Upload, Save, LogOut, Waves } from "lucide-react";
-import soundsData from "../../data/sound.json";
+
+// Placeholder sounds data - can be loaded from API or file
+const soundsData: any = {
+  sounds: [],
+  preloadedSounds: [{ id: "default", name: "Default Sound" }],
+};
 
 interface DistanceZone {
   distance: number;
@@ -166,7 +171,7 @@ export function SettingsPanel({
                         updateZone(index, { soundFont: value })
                       }
                     >
-                      {soundsData.preloadedSounds.map((sound) => (
+                      {soundsData.preloadedSounds.map((sound: any) => (
                         <div
                           key={sound.id}
                           className="flex items-center space-x-2"

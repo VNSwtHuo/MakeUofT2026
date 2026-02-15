@@ -8,16 +8,49 @@ export class ESP32Service {
 
   async connect(): Promise<boolean> {
     try {
-      // Request serial port
-      this.port = await navigator.serial.requestPort();
-      await this.port.open({ baudRate: 9600 });
+      if (!navigator.serial) {
+        throw new Error("Web Serial API not supported in this browser");
+      }
 
-      // Set up writer
-      if (this.port.writable) {
+      // Reuse already-granted ports if available
+      if (!this.port) {
+        const ports = await navigator.serial.getPorts();
+        if (ports && ports.length > 0) {
+          this.port = ports[0];
+        }
+      }
+
+      // If no existing port, ask the user to pick one
+      if (!this.port) {
+        this.port = await navigator.serial.requestPort();
+      }
+
+      // Try to open the port if it's not already open. Some implementations
+      // throw when opening an already-open port, so tolerate that case.
+      try {
+        // A port that is already open typically exposes readable/writable
+        // streams; attempt to open only when they are not available.
+        const needsOpen = !this.port.readable && !this.port.writable;
+        if (needsOpen) {
+          await this.port.open({ baudRate: 9600 });
+        }
+      } catch (err: any) {
+        const msg = String(err?.message || err);
+        if (!/already open|invalidstate|InvalidStateError/i.test(msg)) {
+          throw err;
+        }
+        console.warn(
+          "Serial port already open, continuing without open():",
+          msg,
+        );
+      }
+
+      // Set up writer if available
+      if (this.port.writable && !this.writer) {
         this.writer = this.port.writable.getWriter();
       }
 
-      // Start reading
+      // Start reading (will no-op if not readable)
       this.startReading();
 
       return true;
@@ -29,15 +62,32 @@ export class ESP32Service {
 
   async disconnect(): Promise<void> {
     if (this.reader) {
-      await this.reader.cancel();
+      try {
+        await this.reader.cancel();
+      } catch (err) {
+        console.warn("Error cancelling reader:", err);
+      }
+      try {
+        this.reader.releaseLock();
+      } catch (err) {
+        // ignore
+      }
       this.reader = null;
     }
     if (this.writer) {
-      this.writer.releaseLock();
+      try {
+        this.writer.releaseLock();
+      } catch (err) {
+        console.warn("Error releasing writer lock:", err);
+      }
       this.writer = null;
     }
     if (this.port) {
-      await this.port.close();
+      try {
+        await this.port.close();
+      } catch (err) {
+        console.warn("Error closing port:", err);
+      }
       this.port = null;
     }
   }
@@ -45,7 +95,27 @@ export class ESP32Service {
   private async startReading(): Promise<void> {
     if (!this.port?.readable) return;
 
-    this.reader = this.port.readable.getReader();
+    // If there's already a reader or the stream is locked, don't re-create one
+    if (this.reader) return;
+    // ReadableStream has a 'locked' property in the streams API
+    // If it's already locked, avoid calling getReader() which will throw
+    try {
+      // @ts-ignore - some environments may not have locked typed
+      if (this.port.readable.locked) {
+        console.warn("Readable stream already locked; skipping startReading()");
+        return;
+      }
+    } catch (err) {
+      // If checking locked fails, continue and handle getReader() error below
+    }
+
+    try {
+      this.reader = this.port.readable.getReader();
+    } catch (err: any) {
+      const msg = String(err?.message || err);
+      console.warn("Unable to get reader from readable stream:", msg);
+      return;
+    }
     const decoder = new TextDecoder();
     let buffer = "";
 
@@ -74,7 +144,11 @@ export class ESP32Service {
         setTimeout(() => this.startReading(), 1000);
       }
     } finally {
-      this.reader?.releaseLock();
+      try {
+        this.reader?.releaseLock();
+      } catch (err) {
+        // ignore
+      }
     }
   }
 
@@ -194,6 +268,175 @@ export class ESP32Service {
     // Send end command
     const endCommand = `END_SETTINGS\n`;
     await this.writer.write(encoder.encode(endCommand));
+  }
+
+  /**
+   * Parse a .h file containing unsigned char/uint8_t array data
+   * Returns the raw bytes extracted from the array
+   * Example format:
+   *   unsigned char AUDIO_DATA[] = {
+   *     0x00, 0x01, 0x02, ..., 0xFF
+   *   };
+   */
+  static parseHexFile(fileContent: string): Uint8Array {
+    // Extract the array content between { and }
+    const match = fileContent.match(/\{([^}]+)\}/);
+    if (!match) {
+      throw new Error("Could not find array data in .h file");
+    }
+
+    const arrayContent = match[1];
+    // Split by comma and filter out empty strings and whitespace-only strings
+    const hexValues = arrayContent
+      .split(",")
+      .map((v) => v.trim())
+      .filter((v) => v.length > 0)
+      .map((v) => {
+        // Remove '0x' prefix and convert
+        const hex = v.replace(/0x|0X/, "");
+        return parseInt(hex, 16);
+      });
+
+    if (hexValues.some((v) => isNaN(v))) {
+      throw new Error("Invalid hex values found in array");
+    }
+
+    return new Uint8Array(hexValues);
+  }
+
+  /**
+   * Send audio file (raw bytes) to ESP32 over serial
+   * Protocol:
+   *   START_SOUND <filename> <length>\n
+   *   [binary bytes]
+   *   END_SOUND\n
+   */
+  async sendAudioFile(
+    filename: string,
+    audioBytes: Uint8Array,
+    sampleRate: number = 8000,
+  ): Promise<void> {
+    if (!this.writer) {
+      throw new Error("ESP32 not connected");
+    }
+
+    const encoder = new TextEncoder();
+
+    // Send start marker with filename and byte length
+    const startMessage = `START_SOUND ${filename} ${audioBytes.length}\n`;
+    console.log(
+      `[ESP32] Sending audio file: ${filename} (${audioBytes.length} bytes)`,
+    );
+    await this.writer.write(encoder.encode(startMessage));
+
+    // Wait for ESP32 to be ready
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // Send binary audio data in chunks to avoid buffer overflow
+    const chunkSize = 256;
+    for (let i = 0; i < audioBytes.length; i += chunkSize) {
+      const chunk = audioBytes.slice(
+        i,
+        Math.min(i + chunkSize, audioBytes.length),
+      );
+      await this.writer.write(chunk);
+      // Small delay between chunks to let ESP32 process
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    // Wait before sending end marker
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // Send end marker
+    const endMessage = `END_SOUND\n`;
+    await this.writer.write(encoder.encode(endMessage));
+
+    console.log(`[ESP32] Audio file sent: ${filename}`);
+  }
+
+  /**
+   * Send audio file from a .h file content directly
+   */
+  async sendAudioFileFromHex(
+    filename: string,
+    hexFileContent: string,
+    sampleRate: number = 8000,
+  ): Promise<void> {
+    const audioBytes = ESP32Service.parseHexFile(hexFileContent);
+    await this.sendAudioFile(filename, audioBytes, sampleRate);
+  }
+
+  /**
+   * Convert and send uploaded audio file (MP3/WAV)
+   * This method handles the full pipeline:
+   * 1. Validate file
+   * 2. Convert to PCM
+   * 3. Send to ESP32
+   */
+  async convertAndSendAudioFile(
+    audioFile: File,
+    targetSampleRate: number = 8000,
+  ): Promise<void> {
+    // Import audio converter dynamically
+    const { convertAudioToPCM, validateAudioFile } =
+      await import("@/lib/audioConverter");
+
+    // Validate file
+    const validation = validateAudioFile(audioFile);
+    if (!validation.valid) {
+      throw new Error(validation.error);
+    }
+
+    console.log(`[ESP32] Converting audio file: ${audioFile.name}`);
+
+    // Convert to PCM
+    const { pcmData, metadata } = await convertAudioToPCM(
+      audioFile,
+      targetSampleRate,
+    );
+
+    console.log(
+      `[ESP32] Converted to PCM: ${metadata.sampleCount} samples at ${metadata.sampleRate}Hz`,
+    );
+
+    // Send to ESP32
+    const filename = audioFile.name.replace(/\.(mp3|wav)$/i, ".raw");
+    await this.sendAudioFile(filename, pcmData, metadata.sampleRate);
+  }
+
+  /**
+   * Send multiple audio files (used for saving user settings with audio)
+   */
+  async sendMultipleAudioFiles(
+    audioFiles: Array<{
+      id: string;
+      file?: File;
+      pcmData?: Uint8Array;
+      sampleRate?: number;
+    }>,
+  ): Promise<void> {
+    for (const audio of audioFiles) {
+      try {
+        if (audio.file) {
+          // Convert and send uploaded file
+          await this.convertAndSendAudioFile(
+            audio.file,
+            audio.sampleRate || 8000,
+          );
+        } else if (audio.pcmData) {
+          // Send pre-converted PCM data
+          const filename = `${audio.id}.raw`;
+          await this.sendAudioFile(
+            filename,
+            audio.pcmData,
+            audio.sampleRate || 8000,
+          );
+        }
+      } catch (error) {
+        console.error(`Failed to send audio ${audio.id}:`, error);
+        throw error;
+      }
+    }
   }
 
   onRadarData(callback: (angle: number, distance: number) => void): void {

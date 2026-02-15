@@ -1,0 +1,26 @@
+[
+  {
+    "userId": "09 30 C8 01",
+    "ranges": [
+      {
+        "id": "zone1",
+        "minDistance": 0,
+        "maxDistance": 1,
+        "soundId": "warning"
+      },
+      {
+        "id": "zone2",
+        "minDistance": 1,
+        "maxDistance": 2,
+        "soundId": "alert"
+      },
+      {
+        "id": "zone3",
+        "minDistance": 2,
+        "maxDistance": 4,
+        "soundId": "beep"
+      }
+    ],
+    "updatedAt": "2026-02-15T12:52:12.096Z"
+  }
+]

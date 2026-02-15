@@ -1,6 +1,14 @@
 "use client";
 
-import { LogOut, Upload, Volume2, Play, Pause, Wifi, WifiOff } from "lucide-react";
+import {
+  LogOut,
+  Upload,
+  Volume2,
+  Play,
+  Pause,
+  Wifi,
+  WifiOff,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
 import { useState, useRef, useEffect } from "react";
@@ -71,7 +79,9 @@ const ELEVENLABS_VOICES = [
 
 // Function to play a tone using Web Audio API
 const playTone = (frequency: number, duration: number) => {
-  const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+  const audioContext = new (
+    window.AudioContext || (window as any).webkitAudioContext
+  )();
   const oscillator = audioContext.createOscillator();
   const gainNode = audioContext.createGain();
 
@@ -82,7 +92,10 @@ const playTone = (frequency: number, duration: number) => {
   oscillator.type = "sine";
 
   gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-  gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
+  gainNode.gain.exponentialRampToValueAtTime(
+    0.01,
+    audioContext.currentTime + duration,
+  );
 
   const startTime = audioContext.currentTime;
   oscillator.start(startTime);
@@ -174,7 +187,9 @@ export default function Dashboard() {
   };
 
   // Check if all ranges have audio assigned
-  const allRangesAssigned = distanceTriggers.every((trigger) => trigger.audioId !== null);
+  const allRangesAssigned = distanceTriggers.every(
+    (trigger) => trigger.audioId !== null,
+  );
 
   // Update playback progress animation
   useEffect(() => {
@@ -220,7 +235,9 @@ export default function Dashboard() {
       // UID comes in as hex bytes (e.g. "04 A3 2B ...") - use as-is
       setCurrentUserId(uid);
       try {
-        const resp = await fetch(`/api/settings?userId=${encodeURIComponent(uid)}`);
+        const resp = await fetch(
+          `/api/settings?userId=${encodeURIComponent(uid)}`,
+        );
         if (resp.ok) {
           const data = await resp.json();
           if (data && Array.isArray(data.ranges)) {
@@ -239,7 +256,7 @@ export default function Dashboard() {
           alert(`No saved settings for user ${uid}`);
         }
       } catch (err) {
-        console.error('Failed to load settings for UID', uid, err);
+        console.error("Failed to load settings for UID", uid, err);
       }
     };
 
@@ -354,7 +371,7 @@ export default function Dashboard() {
     );
   };
 
-  // Handle Save and Load
+  // Handle Save and Load with complete audio workflow
   const handleSaveAndLoad = async () => {
     if (!serialConnected) {
       alert("ESP32 not connected. Please connect your device via serial port.");
@@ -374,7 +391,61 @@ export default function Dashboard() {
     setIsSavingSettings(true);
 
     try {
-      // Prepare settings data
+      // Import workflow utilities
+      const { saveSettingsToESP32, getUsedAudioFiles } =
+        await import("@/lib/audioWorkflow");
+
+      // Get all audio files that are assigned to ranges
+      const allAudios = [
+        ...PRESET_BUZZER_SOUNDS,
+        ...uploadedAudios,
+        ...savedCustomTones,
+      ];
+
+      // Convert to AudioFileInfo format
+      const audioFilesInfo = allAudios.map((audio) => ({
+        id: audio.id,
+        name: audio.name,
+        sourceType:
+          audio.sourceType || (audio.isPreset ? "saved-tone" : "uploaded"),
+        frequency: audio.frequency,
+        period: audio.period,
+        url: audio.url,
+      }));
+
+      // Get only the audio files that are used in ranges
+      const usedAudioFiles = getUsedAudioFiles(
+        distanceTriggers,
+        audioFilesInfo as any,
+      );
+
+      if (usedAudioFiles.length === 0) {
+        alert("No audio files to send. Please assign audio to ranges.");
+        return;
+      }
+
+      // Show progress
+      console.log(`Sending ${usedAudioFiles.length} audio files to ESP32...`);
+
+      // Execute complete workflow
+      await saveSettingsToESP32(
+        userId,
+        distanceTriggers.map((trigger) => ({
+          id: trigger.id,
+          minDistance: trigger.minDistance,
+          maxDistance: trigger.maxDistance,
+          audioId: trigger.audioId || "default",
+          audioName: trigger.audioName,
+        })),
+        usedAudioFiles as any,
+        (stage, progress) => {
+          console.log(
+            `[Progress] ${stage} ${progress ? `(${progress}%)` : ""}`,
+          );
+        },
+      );
+
+      // Also save to MongoDB for persistence
       const settingsData = {
         userId,
         ranges: distanceTriggers.map((trigger) => ({
@@ -385,23 +456,6 @@ export default function Dashboard() {
         })),
       };
 
-      // Send to ESP32 via Web Serial through esp32Service
-      try {
-        await esp32Service.sendUserSettings({
-          userId: settingsData.userId,
-          ranges: settingsData.ranges.map((r: any) => ({
-            minDistance: r.minDistance,
-            maxDistance: r.maxDistance,
-            audioId: r.soundId,
-            audioName: r.soundId,
-          })),
-          audioFiles: [],
-        });
-      } catch (err) {
-        throw new Error("Failed to send settings to ESP32");
-      }
-
-      // Also save to MongoDB for persistence
       const response = await fetch("/api/settings", {
         method: "POST",
         headers: {
@@ -411,10 +465,12 @@ export default function Dashboard() {
       });
 
       if (!response.ok) {
-        throw new Error("Failed to save settings to server");
+        console.warn(
+          "Failed to save settings to server (but ESP32 was updated)",
+        );
       }
 
-      alert("Settings saved and loaded to ESP32!");
+      alert("Settings and audio files successfully loaded to ESP32!");
     } catch (error) {
       console.error("Save settings error:", error);
       alert(`Failed to save settings: ${(error as Error).message}`);
@@ -446,7 +502,7 @@ export default function Dashboard() {
             maxDistance: range.maxDistance,
             audioId: range.audiofile,
             audioName: range.audiofile,
-          }))
+          })),
         );
         alert("Settings loaded from saved configuration.");
       }
@@ -548,10 +604,7 @@ export default function Dashboard() {
           playTone(audio.frequency, 0.1);
           const playInterval = setInterval(() => {
             const elapsed = Date.now() - playbackStartTimeRef.current;
-            if (
-              !isPlayingSequence ||
-              elapsed >= playbackDurationRef.current
-            ) {
+            if (!isPlayingSequence || elapsed >= playbackDurationRef.current) {
               clearInterval(playInterval);
               return;
             }
@@ -899,12 +952,18 @@ export default function Dashboard() {
             ) : (
               <WifiOff className="size-5 text-red-600" />
             )}
-            <span className={`text-sm font-semibold ${serialConnected ? "text-green-600" : "text-red-600"}`}>
+            <span
+              className={`text-sm font-semibold ${serialConnected ? "text-green-600" : "text-red-600"}`}
+            >
               {serialStatus}
             </span>
           </div>
-          <h1 className="text-[#313647] text-4xl font-bold">Audio Control Panel</h1>
-          {userId && <p className="text-[#A3B087] text-sm mt-2">User ID: {userId}</p>}
+          <h1 className="text-[#313647] text-4xl font-bold">
+            Audio Control Panel
+          </h1>
+          {userId && (
+            <p className="text-[#A3B087] text-sm mt-2">User ID: {userId}</p>
+          )}
         </div>
         <div className="flex gap-3 flex-wrap">
           {!serialConnected && (
@@ -1241,22 +1300,22 @@ export default function Dashboard() {
             {soundGenerationType === "tts" && (
               <>
                 {/* Voice Selection */}
-              <Button
-                onClick={async () => {
-                  try {
-                    const ok = await esp32Service.connect();
-                    if (ok) alert('ESP32 connected (browser serial)');
-                    else alert('ESP32 connection failed or canceled');
-                  } catch (err) {
-                    console.error(err);
-                    alert('ESP32 connection error');
-                  }
-                }}
-                size="lg"
-                className="ml-3 bg-[#2b7a78] text-white"
-              >
-                Connect ESP32
-              </Button>
+                <Button
+                  onClick={async () => {
+                    try {
+                      const ok = await esp32Service.connect();
+                      if (ok) alert("ESP32 connected (browser serial)");
+                      else alert("ESP32 connection failed or canceled");
+                    } catch (err) {
+                      console.error(err);
+                      alert("ESP32 connection error");
+                    }
+                  }}
+                  size="lg"
+                  className="ml-3 bg-[#2b7a78] text-white"
+                >
+                  Connect ESP32
+                </Button>
                 <div className="space-y-3">
                   <label className="text-lg font-medium text-[#313647]">
                     Select Voice
@@ -1622,14 +1681,14 @@ export default function Dashboard() {
 
           {/* Save and Load Buttons */}
           <div className="mt-8 border-t border-[#A3B087]/20 pt-8 space-y-4">
-            <h3 className="text-lg font-semibold text-[#313647] mb-4">Save & Load Settings</h3>
+            <h3 className="text-lg font-semibold text-[#313647] mb-4">
+              Save & Load Settings
+            </h3>
             <div className="flex flex-col sm:flex-row gap-4">
               <Button
                 onClick={handleSaveAndLoad}
                 disabled={
-                  !serialConnected ||
-                  !allRangesAssigned ||
-                  isSavingSettings
+                  !serialConnected || !allRangesAssigned || isSavingSettings
                 }
                 size="lg"
                 className={`flex-1 ${
