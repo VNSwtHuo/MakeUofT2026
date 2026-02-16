@@ -1,6 +1,12 @@
 const { MongoClient, ServerApiVersion } = require("mongodb");
-const uri =
-  "mongodb+srv://vanessawthuo_db_user:sF3SJefY5Cal7bqw@cluster0.rjtznvf.mongodb.net/?appName=Cluster0";
+
+const uri = process.env.MONGODB_URI;
+
+if (!uri || !uri.trim()) {
+  throw new Error(
+    "Missing MONGODB_URI. Set it in your environment (for example in .env.local).",
+  );
+}
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
