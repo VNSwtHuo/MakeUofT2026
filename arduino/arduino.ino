@@ -287,6 +287,18 @@ void processSerialInput()
 
       if (bytesRead > 0 && audioFile)
       {
+        // Log first 10 bytes for debugging
+        if (audioReceivedBytes == 0 && bytesRead >= 10)
+        {
+          Serial.print("First 10 bytes: ");
+          for (int i = 0; i < 10; i++)
+          {
+            Serial.print(buffer[i]);
+            Serial.print(" ");
+          }
+          Serial.println();
+        }
+        
         audioFile.write(buffer, bytesRead);
         audioReceivedBytes += bytesRead;
 
@@ -326,7 +338,12 @@ void processSerialInput()
         Serial.print(audioExpectedBytes);
         Serial.println(" bytes)");
 
-        audioFile = SPIFFS.open("/sounds/" + audioFilename, FILE_WRITE);
+        String filepath = "/sounds/" + audioFilename;
+        if (SPIFFS.exists(filepath))
+        {
+          SPIFFS.remove(filepath);
+        }
+        audioFile = SPIFFS.open(filepath, FILE_WRITE);
 
         if (audioFile)
         {
@@ -529,6 +546,16 @@ void playAudioBlocking(const String &audioId)
   Serial.print(file.size());
   Serial.println(" bytes)");
 
+  // Log first 10 bytes for debugging
+  Serial.print("First 10 bytes in file: ");
+  for (int i = 0; i < 10 && file.available(); i++)
+  {
+    Serial.print(file.read());
+    Serial.print(" ");
+  }
+  Serial.println();
+  file.seek(0); // Reset to start
+
   isPlayingAudio = true;
 
   unsigned long sampleDelayUs = 1000000UL / audioSampleRate;
@@ -536,8 +563,8 @@ void playAudioBlocking(const String &audioId)
   while (file.available())
   {
     uint8_t sample = file.read();
-    // Volume scaling (30%)
-    uint8_t scaledSample = 128 + ((int)sample - 128) * 0.3; 
+    // Volume scaling (90%)
+    uint8_t scaledSample = 128 + ((int)sample - 128) * 0.5; 
     dacWrite(dacPin, scaledSample);
     delayMicroseconds(sampleDelayUs);
   }

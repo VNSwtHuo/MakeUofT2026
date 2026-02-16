@@ -3,13 +3,10 @@
  * Generates C header files containing audio data as uint8_t arrays
  */
 
-import { AudioMetadata } from './audioConverter';
+import type { AudioMetadata, HFileData } from './audioTypes';
+import { downloadFile } from './audioUtils';
 
-export interface HFileData {
-  filename: string;
-  content: string;
-  arrayName: string;
-}
+export type { HFileData } from './audioTypes';
 
 /**
  * Generate a .h file from PCM audio bytes
@@ -105,15 +102,7 @@ function sanitizeIdentifier(str: string): string {
  * Download .h file to user's computer
  */
 export function downloadHFile(hFileData: HFileData): void {
-  const blob = new Blob([hFileData.content], { type: 'text/plain' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = hFileData.filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  downloadFile(hFileData.filename, hFileData.content);
 }
 
 /**

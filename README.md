@@ -1,25 +1,38 @@
 # MakeUofT2026
 
-Next.js app for the Ultrasonic Navigation System dashboard, audio generation, and distance-based triggers.
+Web dashboard + ESP32 firmware for ultrasonic range-based audio alerts.
+
+## What This Project Does
+
+- Configure distance ranges and assign sounds to each range
+- Upload MP3/WAV files or generate tones/AI audio (ElevenLabs)
+- Convert audio to 8-bit PCM and send it to ESP32 over Web Serial
+- Store range settings in `data/rangeSettings.json` and optional user settings in MongoDB
+
+## Tech Stack
+
+- Next.js (App Router), React, TypeScript
+- Web Serial API (Chrome/Edge)
+- ESP32 firmware in `arduino/arduino.ino`
+- ElevenLabs APIs for TTS/SFX
+- MongoDB for user-related persistence
 
 ## Prerequisites
 
-- Node.js 18+ (recommended: latest LTS)
-- npm (or pnpm/yarn)
-- An ElevenLabs API key for TTS and SFX
-- A MongoDB instance (for saving user settings)
+- Node.js 18+
+- npm
+- ESP32 board (for hardware mode)
+- Chrome or Edge (required for Web Serial)
 
 ## Setup
 
-1) Install dependencies
+1. Install dependencies:
 
 ```bash
 npm install
 ```
 
-2) Configure environment variables
-
-Create a `.env.local` file in the project root:
+2. Create `.env.local` in the project root:
 
 ```bash
 ELEVENLABS_API_KEY=your_elevenlabs_api_key
@@ -27,66 +40,39 @@ MONGODB_URI=your_mongodb_connection_string
 MONGODB_DB=your_database_name
 ```
 
-Notes:
-- `ELEVENLABS_API_KEY` is required for `/api/elevenlabs/tts` and `/api/elevenlabs/music`.
-- `MONGODB_URI` and `MONGODB_DB` are required for the user settings API at `/app/user/route.ts`.
-
-3) Run the dev server
+3. Start development server:
 
 ```bash
 npm run dev
 ```
 
-Open http://localhost:3000 in your browser.
+Open `http://localhost:3000`.
 
-## Useful Scripts
+## Run Flow (Hardware)
 
-- `npm run dev` - start the development server
-- `npm run build` - build for production
-- `npm run start` - run the production build
-- `npm run lint` - lint the codebase
+1. Flash `arduino/arduino.ino` to ESP32 in Arduino IDE
+2. Open the web app and click **Connect to ESP32**
+3. Scan RFID (or use the available guest flow in UI)
+4. Upload/generate audio and assign one sound per range
+5. Click **SAVE & LOAD TO ESP32** to transfer audio/settings
 
-## Features
+## API Routes
 
-- 🎵 **Custom Audio Upload**: Upload MP3/WAV files (< 1MB)
-- 🎛️ **Tone Generator**: Create custom frequency-based buzzer sounds
-- 🤖 **AI Audio**: Generate voice (TTS) and sound effects via ElevenLabs
-- 📏 **Distance Ranges**: Configure up to multiple detection zones (0-2.5 meters)
-- 🔌 **Web Serial**: Direct ESP32 communication via browser
-- 💾 **Audio Streaming**: Automatic conversion and transmission to ESP32 SPIFFS
-- 🔊 **DAC Playback**: Real-time audio playback via ESP32 DAC
+- `POST /api/elevenlabs/tts`
+- `POST /api/elevenlabs/sfx`
+- `POST /api/elevenlabs/music`
+- `GET/POST /api/settings`
+- `GET /api/test-db`
 
-## Quick Start
+## Important Notes
 
-1. **Upload Firmware**: Flash [arduino/arduino.ino](./arduino/arduino.ino) to ESP32
-2. **Start App**: `npm run dev`
-3. **Connect**: Click "Connect ESP32" in browser
-4. **Configure**: Upload/generate audio → Assign to ranges → Save
+- `data/` is required at runtime for local range settings storage.
+- Audio transfer pipeline: MP3/WAV → PCM (8-bit mono) → ESP32 SPIFFS.
+- Default public SVG assets in `public/` are from Next.js starter and safe to keep.
 
-👉 See [QUICKSTART.md](./QUICKSTART.md) for detailed setup instructions
-📚 See [AUDIO_SYSTEM.md](./AUDIO_SYSTEM.md) for complete documentation
+## Scripts
 
-## API Overview
-
-- `POST /api/elevenlabs/tts` - text-to-speech generation
-- `POST /api/elevenlabs/music` - sound effects generation
-- `POST /user` - persist user settings to MongoDB
-- **Web Serial API** - direct ESP32 communication (Chrome/Edge only)
-
-## Audio System
-
-The system converts audio files (MP3/WAV) to 8-bit PCM format and streams them to ESP32 over Web Serial:
-
-```
-Audio File → PCM Conversion (8kHz, 8-bit, mono) → Web Serial → ESP32 SPIFFS → DAC Playback
-```
-
-**Supported Formats**:
-- Input: MP3, WAV (< 1MB)
-- Output: 8-bit unsigned PCM, 8kHz sample rate
-
-**Hardware Requirements**:
-- ESP32 with DAC (GPIO25)
-- Audio amplifier + speaker (recommended)
-- Ultrasonic sensor (HC-SR04)
-- RFID reader (MFRC522)
+- `npm run dev`
+- `npm run build`
+- `npm run start`
+- `npm run lint`

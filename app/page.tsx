@@ -15,15 +15,15 @@ export default function LoginScreen() {
 
   useEffect(() => {
     let navigationTriggered = false; // Prevent multiple navigations
-    
+
     // Check connection status periodically
     const checkConnection = () => {
       setIsESP32Connected(esp32Service.isConnected());
     };
-    
+
     checkConnection();
     const interval = setInterval(checkConnection, 1000);
-    
+
     // Listen for RFID scans - set up callback immediately
     const handleRFIDScan = (uid: string) => {
       // Only process if we have a valid UID and haven't already triggered navigation
@@ -31,10 +31,10 @@ export default function LoginScreen() {
       if (cleanUid && cleanUid.length >= 2 && !navigationTriggered) {
         navigationTriggered = true;
         setDetectedUID(cleanUid);
-        
+
         // Store UID in sessionStorage for dashboard access
         sessionStorage.setItem("currentUserId", cleanUid);
-        
+
         // Navigate to dashboard when RFID is detected
         // Use a small delay to ensure state is updated and UID is stored
         setTimeout(() => {
@@ -42,10 +42,10 @@ export default function LoginScreen() {
         }, 200);
       }
     };
-    
+
     // Set up RFID callback - this must be done before connection
     esp32Service.onRFIDScan(handleRFIDScan);
-    
+
     return () => {
       clearInterval(interval);
       // Clear the callback when component unmounts
@@ -60,11 +60,15 @@ export default function LoginScreen() {
       if (connected) {
         setIsESP32Connected(true);
       } else {
-        alert("Failed to connect to ESP32. Please make sure the device is connected and try again.");
+        alert(
+          "Failed to connect to ESP32. Please make sure the device is connected and try again.",
+        );
       }
     } catch (error) {
       console.error("Connection error:", error);
-      alert("Failed to connect to ESP32. Please grant permission and try again.");
+      alert(
+        "Failed to connect to ESP32. Please grant permission and try again.",
+      );
     } finally {
       setIsConnecting(false);
     }
@@ -128,7 +132,7 @@ export default function LoginScreen() {
                   {isESP32Connected ? "ESP32 Connected" : "ESP32 Not Connected"}
                 </span>
               </div>
-              
+
               {!isESP32Connected && (
                 <Button
                   onClick={handleConnectESP32}

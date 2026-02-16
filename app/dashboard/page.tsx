@@ -13,27 +13,8 @@ import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
 import { useState, useRef, useEffect } from "react";
 import { esp32Service } from "../esp32-intergrate";
-
-interface AudioFile {
-  id: string;
-  name: string;
-  url?: string;
-  isPreset?: boolean;
-  frequency?: number;
-  duration?: number;
-  period?: number;
-  voiceId?: string;
-  voiceName?: string;
-  sourceType?: "uploaded" | "saved-tone" | "ai-voice" | "ai-sfx";
-}
-
-interface DistanceTrigger {
-  id: string;
-  minDistance: number;
-  maxDistance: number;
-  audioId: string | null;
-  audioName?: string;
-}
+import type { AudioFile, DistanceTrigger } from "@/lib/audioTypes";
+import { playTone } from "@/lib/audioUtils";
 
 const PRESET_BUZZER_SOUNDS: AudioFile[] = [
   {
@@ -76,31 +57,6 @@ const ELEVENLABS_VOICES = [
   { id: "pNInz6obpgDQGcFmaJgB", name: "Adam - Deep Male" },
   { id: "GhkQkxbimoIykF4iGYqh", name: "Kyle - Neutral" },
 ];
-
-// Function to play a tone using Web Audio API
-const playTone = (frequency: number, duration: number) => {
-  const audioContext = new (
-    window.AudioContext || (window as any).webkitAudioContext
-  )();
-  const oscillator = audioContext.createOscillator();
-  const gainNode = audioContext.createGain();
-
-  oscillator.connect(gainNode);
-  gainNode.connect(audioContext.destination);
-
-  oscillator.frequency.value = frequency;
-  oscillator.type = "sine";
-
-  gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-  gainNode.gain.exponentialRampToValueAtTime(
-    0.01,
-    audioContext.currentTime + duration,
-  );
-
-  const startTime = audioContext.currentTime;
-  oscillator.start(startTime);
-  oscillator.stop(startTime + duration);
-};
 
 export default function Dashboard() {
   const router = useRouter();
@@ -160,7 +116,7 @@ export default function Dashboard() {
   // Initialize serial connection on mount (if port was previously selected)
   useEffect(() => {
     // No auto-connect: user must click Connect ESP32 (Web Serial requires gesture)
-    
+
     // Set up disconnect listener
     esp32Service.onDisconnect(() => {
       setSerialConnected(false);
@@ -169,7 +125,7 @@ export default function Dashboard() {
       waitingForRFIDRef.current = false;
       alert("ESP32 has been disconnected. Please reconnect to continue.");
     });
-    
+
     return () => {};
   }, []);
 
@@ -183,7 +139,7 @@ export default function Dashboard() {
         setWaitingForRFID(true);
         waitingForRFIDRef.current = true;
         setSerialStatus("Connected - Please scan RFID card");
-        
+
         // Set up disconnect handler
         esp32Service.onDisconnect(() => {
           setSerialConnected(false);
@@ -193,7 +149,7 @@ export default function Dashboard() {
           setIsConnecting(false);
           alert("ESP32 has been disconnected. Please reconnect to continue.");
         });
-        
+
         esp32Service.onRFIDScan((uid: string) => {
           if (waitingForRFIDRef.current) {
             setUserId(uid);
@@ -203,11 +159,11 @@ export default function Dashboard() {
             waitingForRFIDRef.current = false;
             setSerialStatus(`Connected - User: ${uid}`);
             setIsConnecting(false);
-            
+
             // Load user settings
             fetch(`/api/settings?userId=${encodeURIComponent(uid)}`)
-              .then(resp => resp.json())
-              .then(data => {
+              .then((resp) => resp.json())
+              .then((data) => {
                 if (data && Array.isArray(data.ranges)) {
                   const mapped = data.ranges.map((r: any, idx: number) => ({
                     id: r.id || `range-${idx}`,
@@ -219,10 +175,10 @@ export default function Dashboard() {
                   alert(`Loaded settings for user ${uid}`);
                 }
               })
-              .catch(err => console.error("Failed to load settings", err));
+              .catch((err) => console.error("Failed to load settings", err));
           }
         });
-        
+
         esp32Service.onRadarData((angle: number, distance: number) => {
           // optional: handle radar stream updates
         });
@@ -285,13 +241,13 @@ export default function Dashboard() {
     const onRfid = async (uid: string) => {
       // Only handle if not waiting for manual connection RFID
       if (waitingForRFIDRef.current) return;
-      
+
       // UID comes in as hex bytes (e.g. "04 A3 2B ...") - use as-is
       setCurrentUserId(uid);
       setUserId(uid);
       setSignedInViaESP32(true);
       setSerialConnected(true);
-      
+
       try {
         const resp = await fetch(
           `/api/settings?userId=${encodeURIComponent(uid)}`,
@@ -471,6 +427,7 @@ export default function Dashboard() {
         frequency: audio.frequency,
         period: audio.period,
         url: audio.url,
+        file: audio.file,
       }));
 
       // Get only the audio files that are used in ranges
@@ -527,7 +484,8 @@ export default function Dashboard() {
       let storageInfo = "";
       if (response.ok) {
         const saveResult = await response.json();
-        const storageType = saveResult.storage === 'mongodb' ? 'cloud database' : 'local file';
+        const storageType =
+          saveResult.storage === "mongodb" ? "cloud database" : "local file";
         storageInfo = ` (saved to ${storageType})`;
       } else {
         console.warn(
@@ -536,7 +494,9 @@ export default function Dashboard() {
         storageInfo = " (server save failed, but ESP32 updated)";
       }
 
-      alert(`Settings and audio files successfully loaded to ESP32!${storageInfo}`);
+      alert(
+        `Settings and audio files successfully loaded to ESP32!${storageInfo}`,
+      );
     } catch (error) {
       console.error("Save settings error:", error);
       alert(`Failed to save settings: ${(error as Error).message}`);
@@ -553,28 +513,34 @@ export default function Dashboard() {
     }
 
     try {
-      console.log('[Load Settings] Fetching for userId:', userId);
-      const response = await fetch(`/api/settings?userId=${encodeURIComponent(userId)}`);
-      
-      console.log('[Load Settings] Response status:', response.status);
-      
+      console.log("[Load Settings] Fetching for userId:", userId);
+      const response = await fetch(
+        `/api/settings?userId=${encodeURIComponent(userId)}`,
+      );
+
+      console.log("[Load Settings] Response status:", response.status);
+
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        console.error('[Load Settings] Error response:', errorData);
-        
+        console.error("[Load Settings] Error response:", errorData);
+
         if (response.status === 404) {
-          alert("No saved settings found for this user. Please save settings first.");
+          alert(
+            "No saved settings found for this user. Please save settings first.",
+          );
         } else if (response.status === 503) {
           alert("Database not configured. Settings cannot be loaded.");
         } else {
-          alert(`Failed to load settings: ${errorData.error || 'Unknown error'}`);
+          alert(
+            `Failed to load settings: ${errorData.error || "Unknown error"}`,
+          );
         }
         return;
       }
 
       const data = await response.json();
-      console.log('[Load Settings] Received data:', data);
-      
+      console.log("[Load Settings] Received data:", data);
+
       if (data.ranges && data.ranges.length > 0) {
         setDistanceTriggers(
           data.ranges.map((range: any) => ({
@@ -585,8 +551,11 @@ export default function Dashboard() {
             audioName: range.soundId || range.audiofile,
           })),
         );
-        const storageType = data.storage === 'mongodb' ? 'cloud database' : 'local file';
-        alert(`Settings loaded successfully from ${storageType}! Found ${data.ranges.length} range(s).`);
+        const storageType =
+          data.storage === "mongodb" ? "cloud database" : "local file";
+        alert(
+          `Settings loaded successfully from ${storageType}! Found ${data.ranges.length} range(s).`,
+        );
       } else {
         alert("No ranges found in saved settings.");
       }
@@ -863,10 +832,18 @@ export default function Dashboard() {
       const selectedVoiceObj = ELEVENLABS_VOICES.find(
         (v) => v.id === selectedVoice,
       );
+      const safeId = `tts-${Date.now().toString(36)}-${Math.random()
+        .toString(36)
+        .slice(2, 8)}`;
+      const file = new File([audioBlob], `${safeId}.mp3`, {
+        type: audioBlob.type || "audio/mpeg",
+      });
+
       const newAudio: AudioFile = {
-        id: `tts-${Date.now()}-${Math.random()}`,
+        id: safeId,
         name: `Voice: "${text.substring(0, 30)}${text.length > 30 ? "..." : ""}"`,
         url: audioUrl,
+        file,
         isPreset: false,
         voiceId: selectedVoice,
         voiceName: selectedVoiceObj?.name,
@@ -921,10 +898,18 @@ export default function Dashboard() {
       const audioBlob = await response.blob();
       const url = URL.createObjectURL(audioBlob);
 
+      const safeId = `sfx-${Date.now().toString(36)}-${Math.random()
+        .toString(36)
+        .slice(2, 8)}`;
+      const file = new File([audioBlob], `${safeId}.mp3`, {
+        type: audioBlob.type || "audio/mpeg",
+      });
+
       const newAudio: AudioFile = {
-        id: `sfx-${Date.now()}-${Math.random()}`,
+        id: safeId,
         name: `SFX: ${sfxCustomText}`,
         url: url,
+        file,
         isPreset: false,
         sourceType: "ai-sfx",
       };
@@ -954,10 +939,14 @@ export default function Dashboard() {
       const reader = new FileReader();
       reader.onload = (event) => {
         const url = event.target?.result as string;
+        const safeId = `upload-${Date.now().toString(36)}-${Math.random()
+          .toString(36)
+          .slice(2, 8)}`;
         const newAudio: AudioFile = {
-          id: `upload-${Date.now()}-${Math.random()}`,
+          id: safeId,
           name: file.name,
           url,
+          file,
           isPreset: false,
           sourceType: "uploaded",
         };
@@ -1069,7 +1058,11 @@ export default function Dashboard() {
               size="lg"
               className="bg-[#435663] text-white hover:bg-[#435663]/90 whitespace-nowrap"
             >
-              {isConnecting && waitingForRFID ? "Waiting for RFID scan..." : isConnecting ? "Connecting..." : "Connect ESP32"}
+              {isConnecting && waitingForRFID
+                ? "Waiting for RFID scan..."
+                : isConnecting
+                  ? "Connecting..."
+                  : "Connect ESP32"}
             </Button>
           )}
           <Button
@@ -1088,7 +1081,7 @@ export default function Dashboard() {
         {/* UPLOAD AND PRESET SOUNDS */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Upload Section */}
-          <div className="bg-[#A3B087]/15 border-2 border-dashed border-[#A3B087] rounded-xl p-8 flex items-center justify-center">
+          <div className="bg-white border-2 border-dashed border-[#A3B087] rounded-xl p-8 flex items-center justify-center">
             <div className="space-y-4 text-center">
               <h2 className="text-2xl font-semibold text-[#313647] flex items-center justify-center gap-2">
                 <Upload className="size-6" />
@@ -1119,7 +1112,7 @@ export default function Dashboard() {
           </div>
 
           {/* Preset Buzzer Sounds */}
-          <div className="bg-[#A3B087]/20 border border-[#A3B087] rounded-xl p-8">
+          <div className="bg-white border-2 border-[#A3B087] rounded-xl p-8">
             <h2 className="text-2xl font-semibold text-[#313647] mb-6 flex items-center gap-2">
               <Volume2 className="size-6" />
               Preset Buzzer Sounds
@@ -1130,10 +1123,10 @@ export default function Dashboard() {
                   key={audio.id}
                   onClick={() => playSound(audio)}
                   className={`h-24 flex flex-col items-center justify-center
-    bg-[#A3B087]/60 text-[#313647] border border-[#A3B087]/30
-    hover:bg-[#A3B087]/60
-    active:bg-[#A3B087]/60
-    focus:bg-[#A3B087]/60
+    bg-[#A3B087]/50 text-[#313647] border-2 border-[#A3B087]/30
+    hover:bg-[#A3B087]/50
+    active:bg-[#A3B087]/50
+    focus:bg-[#A3B087]/50
     focus-visible:bg-[#A3B087]
     focus-visible:ring-0
     transition-none
@@ -1163,7 +1156,7 @@ export default function Dashboard() {
 
         {/* Custom Audio Files */}
         {(uploadedAudios.length > 0 || savedCustomTones.length > 0) && (
-          <div className="bg-white border border-[#A3B087]/30 rounded-xl p-8">
+          <div className="bg-white border-2 border-[#A3B087]/30 rounded-xl p-8">
             <h2 className="text-2xl font-semibold text-[#313647] mb-6">
               Custom Audio Files
             </h2>
@@ -1230,7 +1223,7 @@ export default function Dashboard() {
         )}
 
         {/* Custom Frequency Generator */}
-        <div className="bg-white border border-[#A3B087]/30 rounded-xl p-8">
+        <div className="bg-white border-2 border-[#A3B087]/50 rounded-xl p-8">
           <h2 className="text-2xl font-semibold text-[#313647] mb-6 flex items-center gap-2">
             <Volume2 className="size-6" />
             Custom Tone Generator
@@ -1367,7 +1360,7 @@ export default function Dashboard() {
         </div>
 
         {/* ElevenLabs Text-to-Speech Generator */}
-        <div className="bg-white border border-[#A3B087]/30 rounded-xl p-8">
+        <div className="bg-white border-2 border-[#A3B087]/50 rounded-xl p-8">
           <h2 className="text-2xl font-semibold text-[#313647] mb-6 flex items-center gap-2">
             <Volume2 className="size-6" />
             AI Sound Generator
@@ -1438,7 +1431,7 @@ export default function Dashboard() {
                   onClick={() => generateTTS(ttsText)}
                   disabled={isGenerating || !ttsText.trim()}
                   size="lg"
-                  className="w-full bg-blue-600 text-white hover:bg-blue-700 disabled:bg-gray-400"
+                  className="w-full bg-[#435663] text-white hover:bg-[#435663]/80 disabled:bg-gray-400"
                 >
                   {isGenerating ? "Generating..." : "Generate Speech"}
                 </Button>
@@ -1513,7 +1506,7 @@ export default function Dashboard() {
           </div>
         </div>
         {/* Distance Range Audio Assignment */}
-        <div className="bg-white border border-[#A3B087]/30 rounded-xl p-8">
+        <div className="bg-white border-2 border-[#A3B087]/50 rounded-xl p-8">
           <h2 className="text-2xl font-semibold text-[#313647] mb-6 flex items-center gap-2">
             <Volume2 className="size-6" />
             Distance-Based Audio Triggers
@@ -1761,7 +1754,7 @@ text-xs font-medium text-[#313647]"
                 size="lg"
                 className={`flex-1 ${
                   serialConnected && allRangesAssigned
-                    ? "bg-green-600 hover:bg-green-700"
+                    ? "bg-[#435663] hover:bg-[#435663]/80"
                     : "bg-gray-400 cursor-not-allowed"
                 } text-white`}
               >

@@ -5,24 +5,9 @@
 
 import { convertAudioToPCM, generateTonePCM } from './audioConverter';
 import { esp32Service } from '@/app/esp32-intergrate';
+import type { AudioFileInfo } from './audioTypes';
 
-export interface AudioFileInfo {
-  id: string;
-  name: string;
-  sourceType: 'uploaded' | 'saved-tone' | 'ai-voice' | 'ai-sfx';
-
-  // For uploaded files
-  file?: File;
-  url?: string;
-
-  // For tones
-  frequency?: number;
-  period?: number;
-
-  // Converted data
-  pcmData?: Uint8Array;
-  sampleRate?: number;
-}
+export type { AudioFileInfo } from './audioTypes';
 
 /**
  * Prepare audio file for ESP32 transmission

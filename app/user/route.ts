@@ -14,7 +14,22 @@ export async function POST(req: Request) {
     }
 
     const client = await clientPromise;
-    const db = client.db(process.env.MONGODB_DB);
+    if (!client) {
+      return NextResponse.json(
+        { error: "MongoDB client unavailable" },
+        { status: 500 }
+      );
+    }
+
+    const dbName = process.env.MONGODB_DB;
+    if (!dbName) {
+      return NextResponse.json(
+        { error: "Missing MONGODB_DB env var" },
+        { status: 500 }
+      );
+    }
+
+    const db = client.db(dbName);
 
     const result = await db.collection("users").updateOne(
       { userId },

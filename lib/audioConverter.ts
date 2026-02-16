@@ -3,17 +3,8 @@
  * Converts MP3/WAV audio files to raw PCM format suitable for ESP32 DAC playback
  */
 
-export interface AudioMetadata {
-  sampleRate: number;
-  channels: number;
-  duration: number;
-  sampleCount: number;
-}
-
-export interface ConvertedAudio {
-  pcmData: Uint8Array;
-  metadata: AudioMetadata;
-}
+export type { AudioMetadata, ConvertedAudio } from './audioTypes';
+import type { AudioMetadata, ConvertedAudio } from './audioTypes';
 
 /**
  * Convert audio file (MP3/WAV) to raw 8-bit PCM data for ESP32 DAC
@@ -23,8 +14,11 @@ export async function convertAudioToPCM(
   audioFile: File,
   targetSampleRate: number = 8000
 ): Promise<ConvertedAudio> {
+  console.log(`[AudioConverter] Converting file: ${audioFile.name}, size: ${audioFile.size} bytes, type: ${audioFile.type}`);
+  
   // Load audio file as ArrayBuffer
   const arrayBuffer = await audioFile.arrayBuffer();
+  console.log(`[AudioConverter] Loaded ArrayBuffer: ${arrayBuffer.byteLength} bytes`);
 
   // Create AudioContext with target sample rate
   const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({
@@ -34,6 +28,7 @@ export async function convertAudioToPCM(
   try {
     // Decode audio data
     const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+    console.log(`[AudioConverter] Decoded audio: ${audioBuffer.numberOfChannels} channels, ${audioBuffer.sampleRate} Hz, ${audioBuffer.duration.toFixed(2)}s`);
 
     // Get channel data (convert to mono if stereo)
     let audioData: Float32Array;
@@ -53,11 +48,15 @@ export async function convertAudioToPCM(
     // But if the decoded sample rate doesn't match, we need offline context
     let resampledData = audioData;
     if (audioBuffer.sampleRate !== targetSampleRate) {
+      console.log(`[AudioConverter] Resampling from ${audioBuffer.sampleRate} Hz to ${targetSampleRate} Hz`);
       resampledData = await resampleAudio(
         audioData,
         audioBuffer.sampleRate,
         targetSampleRate
       );
+      console.log(`[AudioConverter] Resampled: ${resampledData.length} samples`);
+    } else {
+      console.log(`[AudioConverter] No resampling needed (already ${targetSampleRate} Hz)`);
     }
 
     // Convert float32 PCM (-1.0 to 1.0) to 8-bit unsigned PCM (0 to 255)
@@ -68,6 +67,11 @@ export async function convertAudioToPCM(
       // Convert to 0-255 range (8-bit unsigned)
       pcmData[i] = Math.floor((sample + 1) * 127.5);
     }
+
+    // Log sample data for debugging
+    console.log(`[AudioConverter] PCM conversion complete: ${pcmData.length} bytes`);
+    console.log(`[AudioConverter] First 10 samples: [${Array.from(pcmData.slice(0, 10)).join(', ')}]`);
+    console.log(`[AudioConverter] Min/Max values: ${Math.min(...pcmData)} / ${Math.max(...pcmData)}`);
 
     const metadata: AudioMetadata = {
       sampleRate: targetSampleRate,
