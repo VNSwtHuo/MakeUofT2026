@@ -341,10 +341,8 @@ export class ESP32Service {
     // Send start marker with filename and byte length
     const startMessage = `START_SOUND ${filename} ${audioBytes.length}\n`;
     console.log(
-      `[ESP32] Sending audio file: ${filename} (${audioBytes.length} bytes, ${sampleRate} Hz)`,
+      `[ESP32] Sending audio file: ${filename} (${audioBytes.length} bytes)`,
     );
-    console.log(`[ESP32] First 10 bytes: [${Array.from(audioBytes.slice(0, 10)).join(', ')}]`);
-    console.log(`[ESP32] Min/Max values: ${Math.min(...audioBytes)} / ${Math.max(...audioBytes)}`);
     await this.writer.write(encoder.encode(startMessage));
 
     // Wait longer for ESP32 to be ready and open the file
