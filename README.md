@@ -1,4 +1,4 @@
-# MakeUofT2026
+# Beats per Meter
 
 Web dashboard + ESP32 firmware for ultrasonic range-based audio alerts.
 
