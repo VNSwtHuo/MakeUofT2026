@@ -1,5 +1,7 @@
 # Beats per Meter
 
+[Checkout Devpost](https://devpost.com/software/beats-per-meter)
+
 Web dashboard + ESP32 firmware for ultrasonic range-based audio alerts.
 
 ## What This Project Does
